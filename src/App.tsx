@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type AppMode = "Active" | "Focus" | "Break" | "Assessment" | "Paused";
-type ViewMode = "Chat" | "Memory" | "Today";
+type ViewMode = "Chat" | "Memory" | "Today" | "Settings";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -56,6 +56,21 @@ type TimerState = {
   remaining_seconds: number;
 };
 
+type DistractionState = 
+  | "Idle"
+  | "FocusActive"
+  | "RelevantActivity"
+  | "PotentialDistraction"
+  | "DistractionConfirmed"
+  | "InterventionShown"
+  | "Cooldown";
+
+type DesktopSettings = {
+  enabled: boolean;
+  grace_period_seconds: number;
+  cooldown_minutes: number;
+};
+
 export default function App() {
   const [mode, setMode] = useState<AppMode>("Active");
   const [view, setView] = useState<ViewMode>("Today");
@@ -95,8 +110,13 @@ export default function App() {
   const [showSessionConfig, setShowSessionConfig] = useState<{taskId: string | null, type: SessionType} | null>(null);
   const [sessionDuration, setSessionDuration] = useState(25);
 
+  // Desktop Awareness state
+  const [distractionState, setDistractionState] = useState<DistractionState>("Idle");
+  const [desktopSettings, setDesktopSettings] = useState<DesktopSettings>({ enabled: true, grace_period_seconds: 60, cooldown_minutes: 5 });
+
   useEffect(() => {
     invoke<AppMode>("get_app_mode").then(setMode).catch(console.error);
+    invoke<DesktopSettings>("get_desktop_awareness_settings").then(setDesktopSettings).catch(console.error);
   }, []);
 
   const getTodayDateStr = () => {
@@ -120,12 +140,19 @@ export default function App() {
       try {
         const state = await invoke<TimerState>("get_timer_state");
         setTimerState(state);
+
+        // If focus is running, poll distraction state
+        if (state.active_session?.status === 'Running' && state.active_session.session_type === 'Focus') {
+          const dState = await invoke<DistractionState>("get_distraction_state");
+          setDistractionState(dState);
+        } else {
+          setDistractionState("Idle");
+        }
       } catch (err) {
-        console.error("Failed to fetch timer state", err);
+        console.error("Failed to fetch state", err);
       }
     };
     
-    // Poll every 1 second
     interval = window.setInterval(fetchTimerState, 1000);
     fetchTimerState();
     
@@ -158,13 +185,11 @@ export default function App() {
         setPendingDeletionId(response.pending_deletion);
       }
     } catch (err) {
-      console.error("Chat Error:", err);
       let errMsg = "An unexpected error occurred.";
       if (typeof err === "string") {
-        if (err.includes("GEMINI_API_KEY")) errMsg = "NOVA needs a Gemini API key to talk. Please configure it in the .env file.";
+        if (err.includes("GEMINI_API_KEY")) errMsg = "NOVA needs a Gemini API key to talk.";
         else if (err.includes("Assessment Mode")) errMsg = "AI operations are blocked in Assessment Mode.";
-        else if (err.includes("Network")) errMsg = "Network error. Please check your connection.";
-        else errMsg = "AI Provider Error. Service might be unavailable.";
+        else errMsg = "AI Provider Error.";
       }
       setChatError(errMsg);
     } finally {
@@ -207,7 +232,6 @@ export default function App() {
       }
       setMemories(res);
     } catch (e) {
-      console.error(e);
       setMemoryError("Failed to load memories");
     }
   };
@@ -284,7 +308,6 @@ export default function App() {
       const res = await invoke<Task[]>("list_tasks", { date: getTodayDateStr() });
       setTasks(res);
     } catch (e) {
-      console.error(e);
       setTaskError("Failed to load tasks");
     }
   };
@@ -363,33 +386,12 @@ export default function App() {
     }
   };
 
-  const moveTask = async (index: number, direction: -1 | 1) => {
-    if (index + direction < 0 || index + direction >= tasks.length) return;
-    const newTasks = [...tasks];
-    const temp = newTasks[index];
-    newTasks[index] = newTasks[index + direction];
-    newTasks[index + direction] = temp;
-    
-    // Optimistic update
-    setTasks(newTasks);
-    
-    try {
-      await invoke("reorder_tasks", { 
-        date: getTodayDateStr(), 
-        ordered_ids: newTasks.map(t => t.id) 
-      });
-    } catch (e: any) {
-      setTaskError(e.toString());
-      loadTasks(); // revert on fail
-    }
-  };
-
   // Focus Handlers
   const startFocusSession = async () => {
     try {
       if (showSessionConfig?.type === "Focus" && showSessionConfig.taskId) {
         await invoke("start_focus_session", { taskId: showSessionConfig.taskId, durationSeconds: sessionDuration * 60 });
-        loadTasks(); // Update task status to InProgress
+        loadTasks(); 
       } else if (showSessionConfig?.type === "Break") {
         await invoke("start_break", { durationSeconds: sessionDuration * 60 });
       }
@@ -422,11 +424,41 @@ export default function App() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Progress Calculation
-  const totalTasks = tasks.length;
-  const completedTasks = tasks.filter(t => t.status === "Completed").length;
-  const remainingTasks = totalTasks - completedTasks;
-  const progressPercent = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+  // Settings Handlers
+  const handleToggleAwareness = async () => {
+    try {
+      const nv = !desktopSettings.enabled;
+      await invoke("set_desktop_awareness_enabled", { enabled: nv });
+      setDesktopSettings(prev => ({...prev, enabled: nv}));
+    } catch(e) { console.error(e) }
+  };
+
+  const handleChangeGracePeriod = async (e: any) => {
+    try {
+      const v = parseInt(e.target.value, 10);
+      await invoke("set_grace_period", { seconds: v });
+      setDesktopSettings(prev => ({...prev, grace_period_seconds: v}));
+    } catch(e) { console.error(e) }
+  };
+
+  const handleChangeCooldown = async (e: any) => {
+    try {
+      const v = parseInt(e.target.value, 10);
+      await invoke("set_cooldown", { minutes: v });
+      setDesktopSettings(prev => ({...prev, cooldown_minutes: v}));
+    } catch(e) { console.error(e) }
+  };
+
+  // Intervention Handlers
+  const handleReturnToFocus = async () => {
+    await invoke("return_to_focus");
+    setDistractionState("FocusActive");
+  };
+
+  const handleKeepWorkingHere = async () => {
+    await invoke("keep_working_here");
+    setDistractionState("Cooldown");
+  };
 
   const activeTask = timerState.active_session?.task_id 
     ? tasks.find(t => t.id === timerState.active_session!.task_id) 
@@ -435,31 +467,47 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-700">
       
+      {/* Distraction Intervention Modal */}
+      {(distractionState === "DistractionConfirmed" || distractionState === "InterventionShown") && (
+        <div className="absolute inset-0 z-50 bg-zinc-900/90 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-zinc-800 border border-zinc-700 rounded-2xl p-8 max-w-sm w-full shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col items-center text-center transform scale-100 animate-in fade-in zoom-in-95 duration-300">
+                <div className="w-12 h-12 bg-amber-500/20 rounded-full flex items-center justify-center mb-4">
+                  <span className="text-amber-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v2m0 4v.01"/><path d="M5.07 19H19.3c1.5 0 2.25-1.81 1.4-3.05l-7.11-12.2a1.72 1.72 0 0 0-2.98 0L3.5 15.95C2.65 17.19 3.4 19 4.9 19Z"/></svg>
+                  </span>
+                </div>
+                <h2 className="text-xl font-medium text-zinc-100 mb-3">Hey there</h2>
+                <p className="text-sm text-zinc-400 mb-8 leading-relaxed">You've been away from your current task for a while. Want to get back to it?</p>
+                
+                <div className="flex flex-col gap-3 w-full">
+                    <button 
+                      onClick={handleReturnToFocus} 
+                      className="py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium transition-colors shadow-lg shadow-emerald-900/20"
+                    >
+                      Return to Focus
+                    </button>
+                    <button 
+                      onClick={handleKeepWorkingHere} 
+                      className="py-3 px-4 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded-xl text-sm font-medium transition-colors"
+                    >
+                      Keep Working Here
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur-md z-10 shrink-0">
         <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2 mr-4">
+          <div className="flex items-center space-x-2 mr-2">
             <div className={`w-2.5 h-2.5 rounded-full ${timerState.active_session?.status === 'Running' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'}`}></div>
             <h1 className="font-semibold text-zinc-100 tracking-wide text-sm">NOVA</h1>
           </div>
-          <button 
-            onClick={() => setView("Today")}
-            className={`text-sm font-medium transition-colors ${view === "Today" ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
-          >
-            Today
-          </button>
-          <button 
-            onClick={() => setView("Chat")}
-            className={`text-sm font-medium transition-colors ${view === "Chat" ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
-          >
-            Chat
-          </button>
-          <button 
-            onClick={() => setView("Memory")}
-            className={`text-sm font-medium transition-colors ${view === "Memory" ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}
-          >
-            Memory
-          </button>
+          <button onClick={() => setView("Today")} className={`text-sm font-medium transition-colors ${view === "Today" ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}>Today</button>
+          <button onClick={() => setView("Chat")} className={`text-sm font-medium transition-colors ${view === "Chat" ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}>Chat</button>
+          <button onClick={() => setView("Memory")} className={`text-sm font-medium transition-colors ${view === "Memory" ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}>Memory</button>
+          <button onClick={() => setView("Settings")} className={`text-sm font-medium transition-colors ${view === "Settings" ? "text-emerald-400" : "text-zinc-500 hover:text-zinc-300"}`}>Settings</button>
         </div>
         <div className="flex items-center space-x-2">
           {timerState.active_session && timerState.active_session.status !== "Completed" && timerState.active_session.status !== "Cancelled" && (
@@ -471,7 +519,7 @@ export default function App() {
               <span>{formatTime(timerState.remaining_seconds)}</span>
             </button>
           )}
-          <span className="text-xs font-medium px-2.5 py-1 rounded-md bg-zinc-800 text-zinc-300">
+          <span className={`text-xs font-medium px-2.5 py-1 rounded-md ${mode === "Assessment" ? "bg-red-900/50 text-red-400 border border-red-900" : "bg-zinc-800 text-zinc-300"}`}>
             {mode}
           </span>
         </div>
@@ -480,6 +528,58 @@ export default function App() {
       {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto p-4 flex flex-col gap-6 relative">
         
+        {view === "Settings" && (
+          <div className="max-w-xl mx-auto w-full pt-4">
+            <h2 className="text-xl font-medium text-zinc-100 mb-6">Settings</h2>
+            
+            <section className="bg-zinc-800/50 border border-zinc-700/50 rounded-xl p-5 mb-6">
+              <h3 className="text-sm font-medium text-zinc-300 mb-4 uppercase tracking-wider">Desktop Awareness</h3>
+              
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <p className="text-zinc-100 font-medium text-sm">Enable Distraction Monitoring</p>
+                  <p className="text-xs text-zinc-400 mt-1">NOVA will detect when you're distracted during active Focus Sessions.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer" checked={desktopSettings.enabled} onChange={handleToggleAwareness} />
+                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                </label>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-zinc-100 font-medium text-sm mb-1">Grace Period</label>
+                <p className="text-xs text-zinc-400 mb-2">Time allowed on distracting apps before NOVA asks you to return.</p>
+                <select 
+                  value={desktopSettings.grace_period_seconds} 
+                  onChange={handleChangeGracePeriod}
+                  disabled={!desktopSettings.enabled}
+                  className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                >
+                  <option value={30}>30 seconds</option>
+                  <option value={60}>60 seconds</option>
+                  <option value={90}>90 seconds</option>
+                  <option value={120}>120 seconds</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-zinc-100 font-medium text-sm mb-1">Intervention Cooldown</label>
+                <p className="text-xs text-zinc-400 mb-2">Time to wait after you choose "Keep Working Here" before asking again.</p>
+                <select 
+                  value={desktopSettings.cooldown_minutes} 
+                  onChange={handleChangeCooldown}
+                  disabled={!desktopSettings.enabled}
+                  className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                >
+                  <option value={3}>3 minutes</option>
+                  <option value={5}>5 minutes</option>
+                  <option value={10}>10 minutes</option>
+                </select>
+              </div>
+            </section>
+          </div>
+        )}
+
         {view === "Chat" && (
           <>
             {messages.length === 0 && (
@@ -530,18 +630,8 @@ export default function App() {
                 <div className="bg-zinc-800/80 border border-emerald-500/50 rounded-xl p-4 mt-2 shadow-lg shadow-black/20 flex flex-col items-center animate-in fade-in zoom-in-95 duration-200">
                   <p className="text-sm text-zinc-200 mb-3 text-center">NOVA is asking for permission to delete a memory. Are you sure?</p>
                   <div className="flex space-x-3 w-full justify-center">
-                    <button 
-                      onClick={() => handleConfirmDeleteAI(false)}
-                      className="px-4 py-1.5 text-sm font-medium text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded-lg transition-colors flex-1 max-w-[120px]"
-                    >
-                      Cancel
-                    </button>
-                    <button 
-                      onClick={() => handleConfirmDeleteAI(true)}
-                      className="px-4 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg shadow-sm shadow-red-900/50 transition-colors flex-1 max-w-[120px]"
-                    >
-                      Delete
-                    </button>
+                    <button onClick={() => handleConfirmDeleteAI(false)} className="px-4 py-1.5 text-sm font-medium text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded-lg transition-colors flex-1 max-w-[120px]">Cancel</button>
+                    <button onClick={() => handleConfirmDeleteAI(true)} className="px-4 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg shadow-sm shadow-red-900/50 transition-colors flex-1 max-w-[120px]">Delete</button>
                   </div>
                 </div>
               )}
@@ -563,21 +653,6 @@ export default function App() {
               </button>
             </div>
 
-            <div className="bg-zinc-800/50 rounded-xl p-4 mb-6 border border-zinc-700/50">
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-zinc-400">Progress</span>
-                <span className="text-emerald-400 font-medium">{progressPercent}%</span>
-              </div>
-              <div className="w-full bg-zinc-700 rounded-full h-2">
-                <div className="bg-emerald-500 h-2 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%` }}></div>
-              </div>
-              <div className="flex justify-between mt-3 text-xs text-zinc-500">
-                <span>{totalTasks} total</span>
-                <span>{completedTasks} completed</span>
-                <span>{remainingTasks} remaining</span>
-              </div>
-            </div>
-
             {/* Active Session Display */}
             {timerState.active_session && timerState.active_session.status !== 'Cancelled' && (
               <div className={`rounded-xl p-5 mb-6 border transition-all ${
@@ -587,9 +662,9 @@ export default function App() {
                     ? 'bg-blue-900/20 border-blue-500/30'
                     : 'bg-zinc-800/80 border-zinc-700'
               }`}>
-                <div className="flex justify-between items-center mb-4">
+                <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">
+                    <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                       {timerState.active_session.session_type} {timerState.active_session.status === 'Paused' && "(PAUSED)"}
                     </h3>
                     <p className="text-lg font-medium text-zinc-100 mt-1">
@@ -597,6 +672,27 @@ export default function App() {
                         ? (activeTask?.title || "Focus Session")
                         : "Take a break"}
                     </p>
+                    
+                    {/* Desktop Awareness Indicator */}
+                    {timerState.active_session.session_type === 'Focus' && timerState.active_session.status === 'Running' && desktopSettings.enabled && (
+                      <div className="flex items-center gap-1.5 mt-2 text-xs">
+                        <span className="relative flex h-2 w-2">
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${mode === "Assessment" ? "bg-red-400" : "bg-emerald-400"}`}></span>
+                          <span className={`relative inline-flex rounded-full h-2 w-2 ${mode === "Assessment" ? "bg-red-500" : "bg-emerald-500"}`}></span>
+                        </span>
+                        <span className={`${mode === "Assessment" ? "text-red-400" : "text-emerald-400/80"} font-medium`}>
+                          {mode === "Assessment" ? "Activity Monitoring Blocked" : "Focus activity: on"}
+                        </span>
+                      </div>
+                    )}
+                    {timerState.active_session.session_type === 'Focus' && timerState.active_session.status === 'Paused' && desktopSettings.enabled && (
+                       <div className="flex items-center gap-1.5 mt-2 text-xs">
+                         <span className="relative flex h-2 w-2">
+                           <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                         </span>
+                         <span className="text-amber-500/80 font-medium">Focus activity: paused</span>
+                       </div>
+                    )}
                   </div>
                   <div className="text-4xl font-mono tracking-tight font-light text-emerald-400">
                     {formatTime(timerState.remaining_seconds)}
@@ -650,7 +746,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {tasks.map((task, idx) => (
+                  {tasks.map((task, _idx) => (
                     <div key={task.id} className={`group flex items-center gap-3 p-3 rounded-lg border transition-colors ${
                       task.status === "Completed" ? "bg-zinc-800/30 border-transparent opacity-60" : "bg-zinc-800/60 border-zinc-700/50 hover:bg-zinc-800"
                     }`}>
@@ -691,15 +787,6 @@ export default function App() {
                         )}
                       </div>
 
-                      <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity space-y-1">
-                        <button onClick={() => moveTask(idx, -1)} disabled={idx === 0} className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6"/></svg>
-                        </button>
-                        <button onClick={() => moveTask(idx, 1)} disabled={idx === tasks.length - 1} className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                        </button>
-                      </div>
-
                       <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-2 shrink-0">
                         {!timerState.active_session && task.status !== "Completed" && (
                           <button 
@@ -718,82 +805,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            {/* Modal for Create/Edit Task */}
-            {isTaskFormOpen && (
-              <div className="absolute inset-0 z-20 bg-zinc-900/90 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 w-full max-w-md shadow-2xl flex flex-col">
-                  <h3 className="text-lg font-medium text-zinc-100 mb-4">{taskEditingId ? "Edit Task" : "New Task"}</h3>
-                  
-                  {taskError && (
-                    <div className="bg-red-900/20 border border-red-900/50 rounded-lg p-2 mb-4 text-xs text-red-400">
-                      {taskError}
-                    </div>
-                  )}
-
-                  <label className="text-xs text-zinc-400 mb-1">Title</label>
-                  <input 
-                    type="text"
-                    value={taskFormTitle}
-                    onChange={(e) => setTaskFormTitle(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-4 focus:outline-none focus:border-emerald-500"
-                    placeholder="E.g., React Fundamentals"
-                    autoFocus
-                  />
-
-                  <label className="text-xs text-zinc-400 mb-1">Description (Optional)</label>
-                  <textarea 
-                    value={taskFormDesc}
-                    onChange={(e) => setTaskFormDesc(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-4 focus:outline-none focus:border-emerald-500 min-h-[60px] resize-none"
-                    placeholder="Details..."
-                  />
-
-                  <div className="flex gap-4 mb-4">
-                    <div className="flex-1">
-                      <label className="text-xs text-zinc-400 mb-1">Date</label>
-                      <input 
-                        type="date"
-                        value={taskFormDate}
-                        onChange={(e) => setTaskFormDate(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-1.5 px-3 focus:outline-none focus:border-emerald-500"
-                      />
-                    </div>
-                    <div className="w-1/3">
-                      <label className="text-xs text-zinc-400 mb-1">Est. Minutes</label>
-                      <input 
-                        type="number"
-                        value={taskFormEst}
-                        onChange={(e) => setTaskFormEst(e.target.value)}
-                        placeholder="0"
-                        min="0"
-                        className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-1.5 px-3 focus:outline-none focus:border-emerald-500"
-                      />
-                    </div>
-                  </div>
-
-                  <label className="text-xs text-zinc-400 mb-1">Priority</label>
-                  <select 
-                    value={taskFormPriority}
-                    onChange={(e) => setTaskFormPriority(e.target.value as TaskPriority)}
-                    className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-5 focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                  </select>
-
-                  <div className="flex justify-end space-x-3">
-                    <button onClick={() => setIsTaskFormOpen(false)} className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
-                      Cancel
-                    </button>
-                    <button onClick={saveTask} className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded-lg transition-colors">
-                      Save
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
             
             {/* Session Config Modal */}
             {showSessionConfig && (
@@ -823,6 +834,41 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* Task Form Modal */}
+            {isTaskFormOpen && (
+              <div className="absolute inset-0 z-30 bg-zinc-900/90 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 w-full max-w-md shadow-2xl flex flex-col">
+                  <h3 className="text-lg font-medium text-zinc-100 mb-4">{taskEditingId ? "Edit Task" : "New Task"}</h3>
+                  
+                  <label className="text-xs text-zinc-400 mb-1">Title</label>
+                  <input type="text" value={taskFormTitle} onChange={(e) => setTaskFormTitle(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-3 focus:outline-none focus:border-emerald-500" />
+                  
+                  <label className="text-xs text-zinc-400 mb-1">Description (optional)</label>
+                  <textarea value={taskFormDesc} onChange={(e) => setTaskFormDesc(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-3 min-h-[60px] resize-none focus:outline-none focus:border-emerald-500" />
+                  
+                  <div className="flex gap-3 mb-4">
+                    <div className="flex-1">
+                      <label className="text-xs text-zinc-400 mb-1 block">Priority</label>
+                      <select value={taskFormPriority} onChange={(e) => setTaskFormPriority(e.target.value as TaskPriority)} className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 focus:outline-none focus:border-emerald-500">
+                        <option value="Low">Low</option>
+                        <option value="Medium">Medium</option>
+                        <option value="High">High</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-zinc-400 mb-1 block">Est. Minutes (optional)</label>
+                      <input type="number" value={taskFormEst} onChange={(e) => setTaskFormEst(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 focus:outline-none focus:border-emerald-500" />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end space-x-3 mt-2">
+                    <button onClick={() => setIsTaskFormOpen(false)} className="text-sm text-zinc-400 hover:text-zinc-200">Cancel</button>
+                    <button onClick={saveTask} className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded-lg">Save Task</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -840,14 +886,12 @@ export default function App() {
               </div>
             </div>
 
-            <p className="text-xs text-zinc-500 mb-4">Your memories are stored locally on this device.</p>
-
             <input 
               type="text" 
               placeholder="Search memories..." 
               value={searchQuery}
               onChange={handleSearchChange}
-              className="w-full bg-zinc-800/50 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 pl-3 mb-4 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
+              className="w-full bg-zinc-800/50 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 pl-3 mb-4 focus:outline-none focus:border-emerald-500"
             />
 
             {memoryError && (
@@ -872,26 +916,18 @@ export default function App() {
                       </div>
                     </div>
                     <p className="text-sm text-zinc-300 whitespace-pre-wrap">{mem.content}</p>
-                    <div className="mt-2 text-[10px] text-zinc-600">
-                      Updated: {new Date(mem.updated_at * 1000).toLocaleString()}
-                    </div>
                   </div>
                 ))
               )}
             </div>
 
-            {/* Modal for Create/Edit */}
+            {/* Form Modal */}
             {isFormOpen && (
               <div className="absolute inset-0 z-20 bg-zinc-900/90 backdrop-blur-sm flex items-center justify-center p-4">
                 <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 w-full max-w-md shadow-2xl flex flex-col">
                   <h3 className="text-lg font-medium text-zinc-100 mb-4">{editingId ? "Edit Memory" : "New Memory"}</h3>
-                  
                   <label className="text-xs text-zinc-400 mb-1">Category</label>
-                  <select 
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value as MemoryCategory)}
-                    className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-4 focus:outline-none focus:border-emerald-500"
-                  >
+                  <select value={formCategory} onChange={(e) => setFormCategory(e.target.value as MemoryCategory)} className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-4">
                     <option value="Temporary">Temporary</option>
                     <option value="UserPreference">User Preference</option>
                     <option value="Goal">Goal</option>
@@ -899,31 +935,20 @@ export default function App() {
                     <option value="Project">Project</option>
                     <option value="Important">Important</option>
                   </select>
-
                   <label className="text-xs text-zinc-400 mb-1">Content</label>
-                  <textarea 
-                    value={formContent}
-                    onChange={(e) => setFormContent(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-4 focus:outline-none focus:border-emerald-500 min-h-[100px] resize-none"
-                    placeholder="Enter memory content..."
-                  />
-
+                  <textarea value={formContent} onChange={(e) => setFormContent(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-2 px-3 mb-4 min-h-[100px] resize-none" />
                   <div className="flex justify-end space-x-3 mt-2">
-                    <button onClick={() => setIsFormOpen(false)} className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
-                      Cancel
-                    </button>
-                    <button onClick={saveMemory} className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded-lg transition-colors">
-                      Save
-                    </button>
+                    <button onClick={() => setIsFormOpen(false)} className="text-sm text-zinc-400 hover:text-zinc-200">Cancel</button>
+                    <button onClick={saveMemory} className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded-lg">Save</button>
                   </div>
                 </div>
               </div>
             )}
           </div>
         )}
+
       </main>
 
-      {/* Footer / Chat Input */}
       {view === "Chat" && (
         <footer className="p-4 border-t border-zinc-800 bg-zinc-900 shrink-0">
           <div className="relative">
@@ -934,19 +959,18 @@ export default function App() {
               onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
               placeholder="Message NOVA..." 
               disabled={isLoading}
-              className="w-full bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-3 pl-4 pr-12 focus:outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500 disabled:opacity-50 transition-all placeholder:text-zinc-500"
+              className="w-full bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 rounded-lg py-3 pl-4 pr-12 focus:outline-none focus:border-zinc-500"
             />
             <button 
               onClick={handleSendMessage}
               disabled={!inputText.trim() || isLoading}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-zinc-400 hover:text-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors rounded-md hover:bg-zinc-700"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-zinc-400 hover:text-zinc-200 disabled:opacity-50 hover:bg-zinc-700 rounded-md"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
             </button>
           </div>
         </footer>
       )}
-
     </div>
   );
 }

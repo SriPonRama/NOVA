@@ -3,6 +3,7 @@ mod memory;
 mod db;
 mod productivity;
 mod focus;
+mod desktop;
 
 use std::sync::Mutex;
 use tauri::{
@@ -74,6 +75,10 @@ pub fn run() {
             let focus_repo = focus::repository::FocusRepository::new(db_conn.clone());
             let focus_service = focus::service::FocusService::new(focus_repo, productivity_service);
             app.manage(focus_service);
+            
+            let desktop_service = desktop::service::DesktopAwarenessService::new(db_conn.clone());
+            app.manage(desktop_service);
+            desktop::service::DesktopAwarenessService::start_polling(app.handle().clone());
 
             let show_i = MenuItem::with_id(app, "show", "Show NOVA", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "hide", "Hide NOVA", true, None::<&str>)?;
@@ -163,6 +168,13 @@ pub fn run() {
             focus::commands::finish_focus_session,
             focus::commands::cancel_focus_session,
             focus::commands::get_timer_state,
+            desktop::commands::get_desktop_awareness_settings,
+            desktop::commands::set_desktop_awareness_enabled,
+            desktop::commands::set_grace_period,
+            desktop::commands::set_cooldown,
+            desktop::commands::get_distraction_state,
+            desktop::commands::return_to_focus,
+            desktop::commands::keep_working_here,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -53,6 +53,22 @@ pub fn init_db(db_path: PathBuf) -> Result<DbConnection, String> {
         [],
     ).map_err(|e| e.to_string())?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS desktop_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS distraction_rules (
+            app_name TEXT PRIMARY KEY,
+            category TEXT NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
     Ok(Arc::new(Mutex::new(conn)))
 }
 
@@ -99,6 +115,22 @@ pub fn init_in_memory_db() -> Result<DbConnection, String> {
             status TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS desktop_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS distraction_rules (
+            app_name TEXT PRIMARY KEY,
+            category TEXT NOT NULL
         )",
         [],
     ).map_err(|e| e.to_string())?;

@@ -2,6 +2,7 @@ mod ai;
 mod memory;
 mod db;
 mod productivity;
+mod focus;
 
 use std::sync::Mutex;
 use tauri::{
@@ -11,7 +12,7 @@ use tauri::{
 };
 use dotenvy::dotenv;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub enum AppMode {
     Active,
     Focus,
@@ -68,7 +69,11 @@ pub fn run() {
             
             let productivity_repo = productivity::repository::ProductivityRepository::new(db_conn.clone());
             let productivity_service = productivity::service::ProductivityService::new(productivity_repo);
-            app.manage(productivity_service);
+            app.manage(productivity_service.clone());
+            
+            let focus_repo = focus::repository::FocusRepository::new(db_conn.clone());
+            let focus_service = focus::service::FocusService::new(focus_repo, productivity_service);
+            app.manage(focus_service);
 
             let show_i = MenuItem::with_id(app, "show", "Show NOVA", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "hide", "Hide NOVA", true, None::<&str>)?;
@@ -151,6 +156,13 @@ pub fn run() {
             productivity::commands::set_task_status,
             productivity::commands::delete_task,
             productivity::commands::reorder_tasks,
+            focus::commands::start_focus_session,
+            focus::commands::start_break,
+            focus::commands::pause_focus_session,
+            focus::commands::resume_focus_session,
+            focus::commands::finish_focus_session,
+            focus::commands::cancel_focus_session,
+            focus::commands::get_timer_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

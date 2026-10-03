@@ -2,6 +2,7 @@ use super::{Task, TaskPriority, TaskStatus};
 use crate::db::DbConnection;
 use rusqlite::params;
 
+#[derive(Clone)]
 pub struct ProductivityRepository {
     conn: DbConnection,
 }

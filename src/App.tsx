@@ -35,6 +35,27 @@ type Task = {
   updated_at: number;
 };
 
+type SessionType = "Focus" | "Break";
+type SessionStatus = "Running" | "Paused" | "Completed" | "Cancelled";
+
+type FocusSession = {
+  id: string;
+  task_id: string | null;
+  session_type: SessionType;
+  planned_seconds: number;
+  started_at: number | null;
+  paused_at: number | null;
+  ended_at: number | null;
+  status: SessionStatus;
+  created_at: number;
+  updated_at: number;
+};
+
+type TimerState = {
+  active_session: FocusSession | null;
+  remaining_seconds: number;
+};
+
 export default function App() {
   const [mode, setMode] = useState<AppMode>("Active");
   const [view, setView] = useState<ViewMode>("Today");
@@ -69,6 +90,11 @@ export default function App() {
   const [taskFormPriority, setTaskFormPriority] = useState<TaskPriority>("Medium");
   const [taskFormDate, setTaskFormDate] = useState<string>("");
 
+  // Focus state
+  const [timerState, setTimerState] = useState<TimerState>({ active_session: null, remaining_seconds: 0 });
+  const [showSessionConfig, setShowSessionConfig] = useState<{taskId: string | null, type: SessionType} | null>(null);
+  const [sessionDuration, setSessionDuration] = useState(25);
+
   useEffect(() => {
     invoke<AppMode>("get_app_mode").then(setMode).catch(console.error);
   }, []);
@@ -87,6 +113,24 @@ export default function App() {
       loadTasks();
     }
   }, [view, messages, isLoading]);
+
+  useEffect(() => {
+    let interval: number;
+    const fetchTimerState = async () => {
+      try {
+        const state = await invoke<TimerState>("get_timer_state");
+        setTimerState(state);
+      } catch (err) {
+        console.error("Failed to fetch timer state", err);
+      }
+    };
+    
+    // Poll every 1 second
+    interval = window.setInterval(fetchTimerState, 1000);
+    fetchTimerState();
+    
+    return () => clearInterval(interval);
+  }, []);
 
   const changeMode = async (newMode: AppMode) => {
     try {
@@ -340,11 +384,53 @@ export default function App() {
     }
   };
 
+  // Focus Handlers
+  const startFocusSession = async () => {
+    try {
+      if (showSessionConfig?.type === "Focus" && showSessionConfig.taskId) {
+        await invoke("start_focus_session", { taskId: showSessionConfig.taskId, durationSeconds: sessionDuration * 60 });
+        loadTasks(); // Update task status to InProgress
+      } else if (showSessionConfig?.type === "Break") {
+        await invoke("start_break", { durationSeconds: sessionDuration * 60 });
+      }
+      setShowSessionConfig(null);
+    } catch (e: any) {
+      setTaskError(e.toString());
+    }
+  };
+
+  const pauseSession = async () => {
+    try { await invoke("pause_focus_session"); } catch (e: any) { setTaskError(e.toString()); }
+  };
+  
+  const resumeSession = async () => {
+    try { await invoke("resume_focus_session"); } catch (e: any) { setTaskError(e.toString()); }
+  };
+  
+  const finishSession = async () => {
+    try { await invoke("finish_focus_session"); loadTasks(); } catch (e: any) { setTaskError(e.toString()); }
+  };
+  
+  const cancelSession = async () => {
+    if(!window.confirm("Cancel this session?")) return;
+    try { await invoke("cancel_focus_session"); } catch (e: any) { setTaskError(e.toString()); }
+  };
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   // Progress Calculation
   const totalTasks = tasks.length;
   const completedTasks = tasks.filter(t => t.status === "Completed").length;
   const remainingTasks = totalTasks - completedTasks;
   const progressPercent = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+
+  const activeTask = timerState.active_session?.task_id 
+    ? tasks.find(t => t.id === timerState.active_session!.task_id) 
+    : null;
 
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-700">
@@ -353,7 +439,7 @@ export default function App() {
       <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur-md z-10 shrink-0">
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2 mr-4">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+            <div className={`w-2.5 h-2.5 rounded-full ${timerState.active_session?.status === 'Running' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'}`}></div>
             <h1 className="font-semibold text-zinc-100 tracking-wide text-sm">NOVA</h1>
           </div>
           <button 
@@ -376,6 +462,15 @@ export default function App() {
           </button>
         </div>
         <div className="flex items-center space-x-2">
+          {timerState.active_session && timerState.active_session.status !== "Completed" && timerState.active_session.status !== "Cancelled" && (
+            <button 
+              onClick={() => setView("Today")} 
+              className="text-xs font-mono px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-emerald-900/50 transition-colors mr-2 flex items-center gap-2"
+            >
+              <span>{timerState.active_session.session_type.toUpperCase()}</span>
+              <span>{formatTime(timerState.remaining_seconds)}</span>
+            </button>
+          )}
           <span className="text-xs font-medium px-2.5 py-1 rounded-md bg-zinc-800 text-zinc-300">
             {mode}
           </span>
@@ -483,6 +578,62 @@ export default function App() {
               </div>
             </div>
 
+            {/* Active Session Display */}
+            {timerState.active_session && timerState.active_session.status !== 'Cancelled' && (
+              <div className={`rounded-xl p-5 mb-6 border transition-all ${
+                timerState.active_session.status === 'Completed' 
+                  ? 'bg-emerald-900/20 border-emerald-500/50' 
+                  : timerState.active_session.session_type === 'Break'
+                    ? 'bg-blue-900/20 border-blue-500/30'
+                    : 'bg-zinc-800/80 border-zinc-700'
+              }`}>
+                <div className="flex justify-between items-center mb-4">
+                  <div>
+                    <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">
+                      {timerState.active_session.session_type} {timerState.active_session.status === 'Paused' && "(PAUSED)"}
+                    </h3>
+                    <p className="text-lg font-medium text-zinc-100 mt-1">
+                      {timerState.active_session.session_type === "Focus" 
+                        ? (activeTask?.title || "Focus Session")
+                        : "Take a break"}
+                    </p>
+                  </div>
+                  <div className="text-4xl font-mono tracking-tight font-light text-emerald-400">
+                    {formatTime(timerState.remaining_seconds)}
+                  </div>
+                </div>
+
+                <div className="w-full bg-zinc-700/50 rounded-full h-1.5 mb-5 overflow-hidden">
+                  <div className={`h-full transition-all duration-1000 ${timerState.active_session.status === 'Completed' ? 'bg-emerald-500' : 'bg-emerald-400'}`} 
+                       style={{ width: `${Math.max(0, 100 - (timerState.remaining_seconds / timerState.active_session.planned_seconds) * 100)}%` }}></div>
+                </div>
+
+                <div className="flex space-x-3">
+                  {timerState.active_session.status === 'Completed' ? (
+                    timerState.active_session.session_type === 'Focus' ? (
+                      <button onClick={() => { setShowSessionConfig({taskId: null, type: "Break"}); setSessionDuration(5); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg">
+                        Start Break
+                      </button>
+                    ) : (
+                      <button onClick={() => { cancelSession() }} className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-medium rounded-lg">
+                        Ready
+                      </button>
+                    )
+                  ) : (
+                    <>
+                      {timerState.active_session.status === 'Running' ? (
+                        <button onClick={pauseSession} className="px-4 py-2 bg-amber-600/20 text-amber-500 border border-amber-500/50 hover:bg-amber-600/30 text-sm font-medium rounded-lg">Pause</button>
+                      ) : (
+                        <button onClick={resumeSession} className="px-4 py-2 bg-emerald-600/20 text-emerald-500 border border-emerald-500/50 hover:bg-emerald-600/30 text-sm font-medium rounded-lg">Resume</button>
+                      )}
+                      <button onClick={finishSession} className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-sm font-medium rounded-lg">Finish</button>
+                      <button onClick={cancelSession} className="px-4 py-2 text-zinc-500 hover:text-zinc-300 text-sm font-medium rounded-lg ml-auto">Cancel</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
             {taskError && (
               <div className="bg-red-900/20 border border-red-900/50 rounded-lg p-2 mb-4 text-xs text-red-400">
                 {taskError}
@@ -535,6 +686,7 @@ export default function App() {
                                 {task.estimated_minutes}m
                               </span>
                             )}
+                            {task.status === "InProgress" && <span className="text-emerald-500">In Progress</span>}
                           </div>
                         )}
                       </div>
@@ -548,7 +700,15 @@ export default function App() {
                         </button>
                       </div>
 
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex space-x-2 shrink-0">
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-2 shrink-0">
+                        {!timerState.active_session && task.status !== "Completed" && (
+                          <button 
+                            onClick={() => { setShowSessionConfig({taskId: task.id, type: "Focus"}); setSessionDuration(task.estimated_minutes || 25); }}
+                            className="px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/40 rounded text-xs font-medium transition-all"
+                          >
+                            Start Focus
+                          </button>
+                        )}
                         <button onClick={() => deleteTask(task.id)} className="p-1 text-red-500/70 hover:text-red-400 rounded transition-colors hover:bg-red-900/20">
                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                         </button>
@@ -630,6 +790,35 @@ export default function App() {
                     <button onClick={saveTask} className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded-lg transition-colors">
                       Save
                     </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Session Config Modal */}
+            {showSessionConfig && (
+              <div className="absolute inset-0 z-30 bg-zinc-900/90 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-6 w-full max-w-sm shadow-2xl flex flex-col">
+                  <h3 className="text-lg font-medium text-zinc-100 mb-2">
+                    Start {showSessionConfig.type === "Focus" ? "Focus Session" : "Break"}
+                  </h3>
+                  <p className="text-sm text-zinc-400 mb-6">Select duration in minutes:</p>
+                  
+                  <div className="grid grid-cols-3 gap-2 mb-6">
+                    {[5, 10, 15, 25, 45, 60].map(mins => (
+                      <button 
+                        key={mins}
+                        onClick={() => setSessionDuration(mins)}
+                        className={`py-2 rounded-lg text-sm font-medium border transition-colors ${sessionDuration === mins ? 'bg-emerald-600/20 border-emerald-500 text-emerald-400' : 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-zinc-500'}`}
+                      >
+                        {mins} m
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-end space-x-3 mt-2">
+                    <button onClick={() => setShowSessionConfig(null)} className="text-sm text-zinc-400 hover:text-zinc-200">Cancel</button>
+                    <button onClick={startFocusSession} className="text-sm bg-emerald-600 hover:bg-emerald-500 text-white py-2 px-5 rounded-lg">Start</button>
                   </div>
                 </div>
               </div>

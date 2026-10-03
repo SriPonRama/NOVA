@@ -36,6 +36,23 @@ pub fn init_db(db_path: PathBuf) -> Result<DbConnection, String> {
         [],
     ).map_err(|e| e.to_string())?;
 
+    // Create focus_sessions table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS focus_sessions (
+            id TEXT PRIMARY KEY,
+            task_id TEXT,
+            session_type TEXT NOT NULL,
+            planned_seconds INTEGER NOT NULL,
+            started_at INTEGER,
+            paused_at INTEGER,
+            ended_at INTEGER,
+            status TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
     Ok(Arc::new(Mutex::new(conn)))
 }
 
@@ -64,6 +81,22 @@ pub fn init_in_memory_db() -> Result<DbConnection, String> {
             priority TEXT NOT NULL,
             status TEXT NOT NULL,
             position INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS focus_sessions (
+            id TEXT PRIMARY KEY,
+            task_id TEXT,
+            session_type TEXT NOT NULL,
+            planned_seconds INTEGER NOT NULL,
+            started_at INTEGER,
+            paused_at INTEGER,
+            ended_at INTEGER,
+            status TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         )",

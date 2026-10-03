@@ -52,15 +52,35 @@ Tasks are NOT memories.
 - A task is a structured, actionable item.
 - They do not share tables, though they share the same database connection instance for simplicity (`db::DbConnection`).
 
-## Future Integration (Deferred)
+## Focus Session Architecture (Phase 5B)
 
-The task system is intentionally designed as a foundational layer. The following features are **NOT IMPLEMENTED YET** but the architecture is prepared for them:
+### Focus Session Schema (SQLite)
+Focus sessions are tracked in a `focus_sessions` table within `nova.db`.
+- `id` (TEXT, PRIMARY KEY): Unique UUIDv4
+- `task_id` (TEXT): Associated task ID, if any (null for breaks)
+- `session_type` (TEXT, NOT NULL): Enum (`FOCUS`, `BREAK`)
+- `planned_seconds` (INTEGER, NOT NULL): Total duration in seconds
+- `started_at` (INTEGER): UNIX timestamp when session began
+- `paused_at` (INTEGER): UNIX timestamp when currently paused
+- `ended_at` (INTEGER): UNIX timestamp when finished or cancelled
+- `status` (TEXT, NOT NULL): Enum (`RUNNING`, `PAUSED`, `COMPLETED`, `CANCELLED`)
+- `created_at` (INTEGER, NOT NULL): UNIX timestamp
+- `updated_at` (INTEGER, NOT NULL): UNIX timestamp
 
-- **Focus Sessions & Timers**: Future timers will simply store a `Task ID` to associate active focus time with an ongoing task.
-- **Break Timers & Notifications**
+### Timer Authority Strategy
+The Rust backend is authoritative. Real elapsed time is calculated using UNIX timestamps (Current Time - Started At), taking into account any paused intervals. This ensures timers remain completely accurate even when the window is hidden, minimized, or during normal computer sleep without requiring high-frequency background loops.
+
+### Break System
+Breaks follow the exact same schema but lack a `task_id` and have `session_type = 'BREAK'`.
+
+### Future Integration (Deferred)
+
+The following features are **NOT IMPLEMENTED YET**:
+
 - **Desktop/Active-Window Monitoring**
 - **Distraction & Drowsiness Detection (Webcam)**
-- **Gemini Task Management Tools**: Currently, Gemini has no access to the task layer. The AI cannot automatically create, modify, or delete tasks. This ensures stability of the core task foundation before introducing unpredictable LLM writes.
+- **Gemini Task Management Tools**: Currently, Gemini has no access to the task layer.
+- **AI Scheduling & Intervention**
 
 ## Assessment Mode Constraints
-The task system natively respects `Assessment Mode`. While Assessment Mode is active, the UI is hidden, preventing user manipulation of the task list, and because Gemini is blocked and background workers are suspended, no task operations occur.
+The task and focus system natively respect `Assessment Mode`. While Assessment Mode is active, the UI is hidden, preventing user manipulation of the task list or timers, and because Gemini is blocked and background workers are suspended, no productivity intervention occurs.

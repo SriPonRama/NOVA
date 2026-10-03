@@ -2,6 +2,7 @@ use super::{repository::ProductivityRepository, Task, TaskPriority, TaskStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct ProductivityService {
     repo: ProductivityRepository,
 }

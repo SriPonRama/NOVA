@@ -85,7 +85,8 @@ mod tests {
     use super::*;
 
     fn setup_service() -> MemoryService {
-        let repo = MemoryRepository::new_in_memory().unwrap();
+        let conn = crate::db::init_in_memory_db().unwrap();
+        let repo = MemoryRepository::new(conn);
         MemoryService::new(repo)
     }
 

@@ -1,40 +1,14 @@
 use super::{Memory, MemoryCategory};
-use rusqlite::{params, Connection, Result as SqlResult};
-use std::path::PathBuf;
-use std::sync::Mutex;
+use rusqlite::params;
+use crate::db::DbConnection;
 
 pub struct MemoryRepository {
-    conn: Mutex<Connection>,
+    conn: DbConnection,
 }
 
 impl MemoryRepository {
-    pub fn new(db_path: PathBuf) -> Result<Self, String> {
-        let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-        let repo = Self { conn: Mutex::new(conn) };
-        repo.init_db().map_err(|e| e.to_string())?;
-        Ok(repo)
-    }
-
-    #[cfg(test)]
-    pub fn new_in_memory() -> Result<Self, String> {
-        let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
-        let repo = Self { conn: Mutex::new(conn) };
-        repo.init_db().map_err(|e| e.to_string())?;
-        Ok(repo)
-    }
-
-    fn init_db(&self) -> SqlResult<()> {
-        self.conn.lock().unwrap().execute(
-            "CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                category TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-            [],
-        )?;
-        Ok(())
+    pub fn new(conn: DbConnection) -> Self {
+        Self { conn }
     }
 
     pub fn create_memory(&self, memory: &Memory) -> Result<(), String> {

@@ -1,5 +1,7 @@
 mod ai;
 mod memory;
+mod db;
+mod productivity;
 
 use std::sync::Mutex;
 use tauri::{
@@ -58,9 +60,15 @@ pub fn run() {
             std::fs::create_dir_all(&app_dir).unwrap();
             let db_path = app_dir.join("nova.db");
             
-            let repo = memory::repository::MemoryRepository::new(db_path).expect("Failed to init DB");
-            let memory_service = memory::service::MemoryService::new(repo);
+            let db_conn = db::init_db(db_path).expect("Failed to init DB");
+            
+            let memory_repo = memory::repository::MemoryRepository::new(db_conn.clone());
+            let memory_service = memory::service::MemoryService::new(memory_repo);
             app.manage(memory_service);
+            
+            let productivity_repo = productivity::repository::ProductivityRepository::new(db_conn.clone());
+            let productivity_service = productivity::service::ProductivityService::new(productivity_repo);
+            app.manage(productivity_service);
 
             let show_i = MenuItem::with_id(app, "show", "Show NOVA", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "hide", "Hide NOVA", true, None::<&str>)?;
@@ -136,6 +144,13 @@ pub fn run() {
             memory::commands::update_memory,
             memory::commands::delete_memory,
             memory::commands::clear_all_memories,
+            productivity::commands::create_task,
+            productivity::commands::get_task,
+            productivity::commands::list_tasks,
+            productivity::commands::update_task,
+            productivity::commands::set_task_status,
+            productivity::commands::delete_task,
+            productivity::commands::reorder_tasks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

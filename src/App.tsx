@@ -81,6 +81,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [pendingDeletionId, setPendingDeletionId] = useState<string | null>(null);
+  const [pendingDeletionType, setPendingDeletionType] = useState<"memory" | "task" | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Memory state
@@ -178,11 +179,12 @@ export default function App() {
     setChatError(null);
 
     try {
-      const response = await invoke<{text: string, pending_deletion: string | null}>("send_message", { message: userMessage.content });
+      const response = await invoke<{text: string, pending_deletion: string | null, pending_deletion_type: string | null}>("send_message", { message: userMessage.content });
       setMessages((prev) => [...prev, { role: "assistant", content: response.text }]);
       
       if (response.pending_deletion) {
         setPendingDeletionId(response.pending_deletion);
+        setPendingDeletionType(response.pending_deletion_type as "memory" | "task" | null);
       }
     } catch (err) {
       let errMsg = "An unexpected error occurred.";
@@ -207,13 +209,22 @@ export default function App() {
   const handleConfirmDeleteAI = async (confirm: boolean) => {
     if (!pendingDeletionId) return;
     const id = pendingDeletionId;
+    const type = pendingDeletionType;
     setPendingDeletionId(null);
+    setPendingDeletionType(null);
     if (confirm) {
       try {
-        await invoke("delete_memory", { id });
-        await sendMessageCore("I confirmed the deletion.");
+        if (type === "task") {
+            await invoke("delete_task", { id });
+            await sendMessageCore("I confirmed the task deletion.");
+            loadTasks();
+        } else {
+            await invoke("delete_memory", { id });
+            await sendMessageCore("I confirmed the memory deletion.");
+            loadMemories();
+        }
       } catch (err) {
-        console.error("Failed to delete memory via AI:", err);
+        console.error(`Failed to delete ${type} via AI:`, err);
       }
     } else {
       await sendMessageCore("I cancelled the deletion.");
@@ -628,7 +639,7 @@ export default function App() {
 
               {pendingDeletionId && (
                 <div className="bg-zinc-800/80 border border-emerald-500/50 rounded-xl p-4 mt-2 shadow-lg shadow-black/20 flex flex-col items-center animate-in fade-in zoom-in-95 duration-200">
-                  <p className="text-sm text-zinc-200 mb-3 text-center">NOVA is asking for permission to delete a memory. Are you sure?</p>
+                  <p className="text-sm text-zinc-200 mb-3 text-center">NOVA is asking for permission to delete a {pendingDeletionType === 'task' ? 'task' : 'memory'}. Are you sure?</p>
                   <div className="flex space-x-3 w-full justify-center">
                     <button onClick={() => handleConfirmDeleteAI(false)} className="px-4 py-1.5 text-sm font-medium text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded-lg transition-colors flex-1 max-w-[120px]">Cancel</button>
                     <button onClick={() => handleConfirmDeleteAI(true)} className="px-4 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg shadow-sm shadow-red-900/50 transition-colors flex-1 max-w-[120px]">Delete</button>

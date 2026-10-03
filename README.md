@@ -3,20 +3,19 @@
 
 NOVA is a mature personal AI desktop companion for Windows, designed with privacy and modularity in mind.
 
-## Planned Capabilities
-- Persistent desktop presence
-- Conversational AI
-- User-controlled long-term memory
-- Study/task management
-- Focus sessions & break management
-- Intelligent reminders
-- Optional local drowsiness detection
-- Distraction awareness (based on active applications)
-- Current AI news briefing
-- Mini logic/puzzle games
-- Voice interaction
-- Explicit Assessment Mode (completely disables NOVA)
-- Privacy-first / local-first architecture
+## Capabilities Status
+
+- **IMPLEMENTED**: Persistent desktop UI shell (Tauri/React scaffolding)
+- **PLANNED**: Conversational AI
+- **PLANNED**: User-controlled long-term memory (SQLite)
+- **PLANNED**: Explicit Assessment Mode (completely disables NOVA)
+- **FUTURE**: Study/task management & Focus sessions
+- **FUTURE**: Distraction awareness (based on active applications)
+- **FUTURE**: Current AI news briefing
+- **FUTURE**: Mini logic/puzzle games
+- **FUTURE**: Intelligent reminders
+- **FUTURE**: Optional local drowsiness detection (Computer Vision)
+- **FUTURE**: Voice interaction
 
 ## Technology Stack
 - **Desktop/Native Layer**: Tauri 2, Rust
@@ -26,13 +25,12 @@ NOVA is a mature personal AI desktop companion for Windows, designed with privac
 ## High-Level Architecture
 NOVA separates the UI (React/TS), the desktop/native shell (Rust/Tauri), and future AI/Computer Vision systems into distinct modular boundaries. 
 
+For detailed architecture blueprints and ADRs, see the `docs/architecture/` directory.
+
 ## Development Setup
 Ensure you have Node.js and Rust installed.
 1. `npm install`
 2. `npm run tauri dev`
-
-## Git Workflow
-We use a standard branching and pull request workflow. Commit messages follow conventional commits (e.g., `feat:`, `fix:`, `chore:`, `docs:`).
 
 ## Privacy Principles
 - Local-first architecture where practical.
@@ -41,10 +39,3 @@ We use a standard branching and pull request workflow. Commit messages follow co
 - Users have full transparency into memories and can edit/delete them.
 - No silent collection of unnecessary telemetry.
 - **Assessment Mode**: Completely disables all monitoring and interactions when enabled.
-
-## Roadmap
-- MVP: Desktop UI shell and scaffold
-- Phase 1: Local memory and settings integration
-- Phase 2: Focus and task management
-- Phase 3: Conversational AI and logic modules
-- Phase 4: Local drowsiness and distraction monitoring

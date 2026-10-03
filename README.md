@@ -6,9 +6,10 @@ NOVA is a mature personal AI desktop companion for Windows, designed with privac
 ## Capabilities Status
 
 - **IMPLEMENTED**: Persistent desktop UI shell (Tauri/React scaffolding)
-- **PLANNED**: Conversational AI
-- **PLANNED**: User-controlled long-term memory (SQLite)
-- **PLANNED**: Explicit Assessment Mode (completely disables NOVA)
+- **IMPLEMENTED**: Conversational AI (Gemini Engine)
+- **IMPLEMENTED**: Local persistent memory foundation, CRUD, search, Memory Manager (SQLite)
+- **IMPLEMENTED**: Explicit Assessment Mode (completely disables NOVA UI)
+- **NOT YET IMPLEMENTED**: Gemini memory tools (auto-extraction), Semantic search, Vector embeddings
 - **FUTURE**: Study/task management & Focus sessions
 - **FUTURE**: Distraction awareness (based on active applications)
 - **FUTURE**: Current AI news briefing

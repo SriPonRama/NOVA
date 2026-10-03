@@ -26,3 +26,9 @@ dist-ssr
 # Environment Variables
 .env
 .env.*
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal

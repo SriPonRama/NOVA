@@ -1,4 +1,5 @@
 mod ai;
+mod memory;
 
 use std::sync::Mutex;
 use tauri::{
@@ -53,6 +54,14 @@ pub fn run() {
         })
         .manage(ai::conversation::ConversationState::new())
         .setup(|app| {
+            let app_dir = app.path().app_data_dir().expect("Failed to get app data dir");
+            std::fs::create_dir_all(&app_dir).unwrap();
+            let db_path = app_dir.join("nova.db");
+            
+            let repo = memory::repository::MemoryRepository::new(db_path).expect("Failed to init DB");
+            let memory_service = memory::service::MemoryService::new(repo);
+            app.manage(memory_service);
+
             let show_i = MenuItem::with_id(app, "show", "Show NOVA", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "hide", "Hide NOVA", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit NOVA", true, None::<&str>)?;
@@ -119,7 +128,14 @@ pub fn run() {
             set_app_mode, 
             get_app_mode,
             ai::conversation::send_message,
-            ai::conversation::clear_conversation
+            ai::conversation::clear_conversation,
+            memory::commands::create_memory,
+            memory::commands::get_memory,
+            memory::commands::list_memories,
+            memory::commands::search_memories,
+            memory::commands::update_memory,
+            memory::commands::delete_memory,
+            memory::commands::clear_all_memories,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -17,7 +17,10 @@ The AI cannot execute arbitrary bash commands or read arbitrary files. It is str
 
 ### Execution Flow
 1. **User** asks a question.
-2. **AI** determines it needs to set a reminder.
-3. **AI** outputs an **Allowed Tool Call** (e.g., `set_reminder(time, task)`).
-4. The **Rust Application Service** intercepts the tool call, validates it, and executes the native logic.
-5. The **Result** is fed back to the AI or directly to the User.
+2. **AI** determines it needs to use a tool (e.g., `create_memory`).
+3. **AI** outputs an **Allowed Tool Call**.
+4. The **Rust Application Service (ToolExecutor)** intercepts the tool call, validates it, and executes the native logic.
+5. The **Result** is fed back to the AI in the same conversation turn.
+6. The AI loops until it has all the context it needs, returning a final response to the User.
+
+**NOTE**: See [tools.md](./tools.md) for detailed Tool execution architecture, validation rules, and the implemented memory tools (Phase 4B).

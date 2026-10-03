@@ -18,8 +18,8 @@ pub enum AppMode {
     Paused,
 }
 
-struct NovaState {
-    mode: Mutex<AppMode>,
+pub struct NovaState {
+    pub mode: Mutex<AppMode>,
 }
 
 #[tauri::command]

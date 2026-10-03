@@ -34,5 +34,8 @@ For Phase 4A, memory search is implemented using a simple SQLite `LIKE '%query%'
 - Memory content is NOT logged to the terminal or debug files.
 - The `.db` files are explicitly excluded via `.gitignore`.
 
-## Deferred AI Integration (Phase 4B)
-**Crucially, Gemini DOES NOT automatically extract, store, or retrieve memories in this phase.** The Memory Manager is entirely manual. Allowing LLMs to freely write to the database introduces hallucination risks where the AI might corrupt user context. Phase 4B will introduce controlled `tool_calls` enabling the AI to explicitly request memory operations.
+## AI Integration (Phase 4B Complete)
+Gemini now integrates with the Memory Service via a strictly controlled **ToolExecutor**.
+- The AI can automatically call `create_memory`, `search_memory`, `get_memory`, and `update_memory`.
+- **Safety**: `delete_memory` is exposed to the AI, but it is **not** immediately executed. Instead, it triggers a UI confirmation prompt. Only if the user explicitly approves does the memory get permanently deleted.
+- **Assessment Mode**: When Assessment Mode is active, the Rust backend explicitly hard-blocks the entire AI invocation loop and any memory tool execution, maintaining focus and privacy.

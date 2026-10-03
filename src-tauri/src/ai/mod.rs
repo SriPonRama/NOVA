@@ -3,8 +3,31 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationMessage {
-    pub role: String, // "user" or "assistant"
+    pub role: String, // "user", "assistant", or "tool"
     pub content: String,
+    pub tool_calls: Option<Vec<ToolCall>>,
+    pub tool_results: Option<Vec<ToolResult>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub id: String,
+    pub name: String,
+    pub result: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,11 +39,13 @@ pub struct ConversationContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIRequest {
     pub context: ConversationContext,
+    pub tools: Option<Vec<ToolDefinition>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIResponse {
-    pub text: String,
+    pub text: Option<String>,
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,3 +76,5 @@ pub trait AIProvider: Send + Sync {
 
 pub mod gemini;
 pub mod conversation;
+pub mod tools;
+pub mod executor;

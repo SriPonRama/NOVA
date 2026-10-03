@@ -1,6 +1,9 @@
-use super::{gemini::GeminiProvider, AIProvider, AIRequest, ConversationContext, ConversationMessage};
+use super::{gemini::GeminiProvider, AIProvider, AIRequest, ConversationContext, ConversationMessage, ToolResult};
+use crate::ai::tools::get_memory_tools;
+use crate::ai::executor::ToolExecutor;
 use std::sync::Mutex;
 use tauri::State;
+use serde_json::json;
 
 pub struct ConversationState {
     pub history: Mutex<Vec<ConversationMessage>>,
@@ -20,48 +23,108 @@ const NOVA_SYSTEM_INSTRUCTION: &str = "\
 You are NOVA, a mature, calm, and friendly AI desktop companion. 
 You are supportive, conversational, and concise when appropriate.
 You help the user accomplish tasks.
-You are currently in Phase 3 of development (Gemini integration).
+You are currently in Phase 4B of development, where you have access to local memory tools.
+When asked to remember something, explicitly use the `create_memory` tool.
+When asked to recall, use `search_memory` or `get_memory`.
+If asked to forget, use `delete_memory`.
+Only store information deliberately when the user intends for it to be persistent. Do not store every message.
 Do NOT claim to have capabilities that are not yet implemented.
-Available capabilities: Conversation.
-Planned capabilities (DO NOT CLAIM THESE ARE ACTIVE YET): memory, drowsy detection, active-window monitoring, AI news, games.
+Available capabilities: Conversation, Persistent Local Memory.
+Planned capabilities (DO NOT CLAIM THESE ARE ACTIVE YET): drowsy detection, active-window monitoring, AI news, games.
 Be helpful, professional, and clear.";
 
 #[tauri::command]
 pub async fn send_message(
     message: String,
     state: State<'_, ConversationState>,
-) -> Result<String, String> {
+    nova_state: State<'_, crate::NovaState>,
+    memory_service: State<'_, crate::memory::service::MemoryService>,
+) -> Result<serde_json::Value, String> {
     
-    // 1. Update context
+    if let crate::AppMode::Assessment = *nova_state.mode.lock().unwrap() {
+        return Err("AI and memory operations are blocked during Assessment Mode.".to_string());
+    }
+
     let mut history = state.history.lock().unwrap().clone();
     
     let user_msg = ConversationMessage {
         role: "user".to_string(),
         content: message.clone(),
+        tool_calls: None,
+        tool_results: None,
     };
     history.push(user_msg.clone());
 
-    let context = ConversationContext {
-        messages: history.clone(),
-        system_instruction: Some(NOVA_SYSTEM_INSTRUCTION.to_string()),
-    };
+    let mut pending_deletion_id: Option<String> = None;
+    let mut round_count = 0;
+    const MAX_ROUNDS: usize = 5;
+    let mut final_text = String::new();
 
-    let request = AIRequest { context };
+    loop {
+        if round_count >= MAX_ROUNDS {
+            final_text.push_str("\n[System: Maximum tool execution depth reached.]");
+            break;
+        }
+        round_count += 1;
 
-    // 2. Call provider
-    let response = state.provider.generate_response(request).await.map_err(|e| e.to_string())?;
+        let context = ConversationContext {
+            messages: history.clone(),
+            system_instruction: Some(NOVA_SYSTEM_INSTRUCTION.to_string()),
+        };
 
-    // 3. Save assistant response
-    let assistant_msg = ConversationMessage {
-        role: "assistant".to_string(),
-        content: response.text.clone(),
-    };
-    
-    let mut actual_history = state.history.lock().unwrap();
-    actual_history.push(user_msg);
-    actual_history.push(assistant_msg);
+        let request = AIRequest { 
+            context,
+            tools: Some(get_memory_tools()),
+        };
 
-    Ok(response.text)
+        let response = state.provider.generate_response(request).await.map_err(|e| e.to_string())?;
+
+        let assistant_msg = ConversationMessage {
+            role: "assistant".to_string(),
+            content: response.text.clone().unwrap_or_default(),
+            tool_calls: response.tool_calls.clone(),
+            tool_results: None,
+        };
+        history.push(assistant_msg.clone());
+        
+        if let Some(text) = response.text {
+            if !text.is_empty() {
+                final_text.push_str(&text);
+                final_text.push('\n');
+            }
+        }
+
+        if let Some(tool_calls) = response.tool_calls {
+            let mut results = Vec::new();
+            for call in tool_calls {
+                let res = ToolExecutor::execute(&call, &memory_service);
+                
+                if call.name == "delete_memory" {
+                    if let Some(id) = res.result.get("requested_id").and_then(|id| id.as_str()) {
+                        pending_deletion_id = Some(id.to_string());
+                    }
+                }
+                results.push(res);
+            }
+            
+            let tool_msg = ConversationMessage {
+                role: "tool".to_string(),
+                content: "".to_string(),
+                tool_calls: None,
+                tool_results: Some(results),
+            };
+            history.push(tool_msg);
+        } else {
+            break; // No more tool calls
+        }
+    }
+
+    *state.history.lock().unwrap() = history;
+
+    Ok(json!({
+        "text": final_text.trim(),
+        "pending_deletion": pending_deletion_id,
+    }))
 }
 
 #[tauri::command]
@@ -91,7 +154,8 @@ mod tests {
                 return Err(AIError::ProviderError("Empty messages".to_string()));
             }
             Ok(AIResponse {
-                text: "Mock response".to_string(),
+                text: Some("Mock response".to_string()),
+                tool_calls: None,
             })
         }
     }
@@ -104,13 +168,16 @@ mod tests {
                 messages: vec![ConversationMessage {
                     role: "user".to_string(),
                     content: "Hello".to_string(),
+                    tool_calls: None,
+                    tool_results: None,
                 }],
                 system_instruction: None,
-            }
+            },
+            tools: None,
         };
         let res = provider.generate_response(req).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap().text, "Mock response");
+        assert_eq!(res.unwrap().text.unwrap(), "Mock response");
     }
 
     #[tokio::test]
@@ -121,9 +188,12 @@ mod tests {
                 messages: vec![ConversationMessage {
                     role: "user".to_string(),
                     content: "Hello".to_string(),
+                    tool_calls: None,
+                    tool_results: None,
                 }],
                 system_instruction: None,
-            }
+            },
+            tools: None,
         };
         let res = provider.generate_response(req).await;
         assert!(res.is_err());

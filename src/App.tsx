@@ -28,6 +28,7 @@ export default function App() {
   const [inputText, setInputText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [pendingDeletionId, setPendingDeletionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Memory state
@@ -62,29 +63,56 @@ export default function App() {
   };
 
   // Chat Handlers
-  const handleSendMessage = async () => {
-    if (!inputText.trim() || isLoading) return;
+  const sendMessageCore = async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return;
 
-    const userMessage: ChatMessage = { role: "user", content: inputText.trim() };
+    const userMessage: ChatMessage = { role: "user", content: messageText.trim() };
     setMessages((prev) => [...prev, userMessage]);
-    setInputText("");
     setIsLoading(true);
     setChatError(null);
 
     try {
-      const response = await invoke<string>("send_message", { message: userMessage.content });
-      setMessages((prev) => [...prev, { role: "assistant", content: response }]);
+      const response = await invoke<{text: string, pending_deletion: string | null}>("send_message", { message: userMessage.content });
+      setMessages((prev) => [...prev, { role: "assistant", content: response.text }]);
+      
+      if (response.pending_deletion) {
+        setPendingDeletionId(response.pending_deletion);
+      }
     } catch (err) {
       console.error("Chat Error:", err);
       let errMsg = "An unexpected error occurred.";
       if (typeof err === "string") {
         if (err.includes("GEMINI_API_KEY")) errMsg = "NOVA needs a Gemini API key to talk. Please configure it in the .env file.";
+        else if (err.includes("Assessment Mode")) errMsg = "AI operations are blocked in Assessment Mode.";
         else if (err.includes("Network")) errMsg = "Network error. Please check your connection.";
         else errMsg = "AI Provider Error. Service might be unavailable.";
       }
       setChatError(errMsg);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!inputText.trim()) return;
+    const text = inputText;
+    setInputText("");
+    await sendMessageCore(text);
+  };
+
+  const handleConfirmDeleteAI = async (confirm: boolean) => {
+    if (!pendingDeletionId) return;
+    const id = pendingDeletionId;
+    setPendingDeletionId(null);
+    if (confirm) {
+      try {
+        await invoke("delete_memory", { id });
+        await sendMessageCore("I confirmed the deletion.");
+      } catch (err) {
+        console.error("Failed to delete memory via AI:", err);
+      }
+    } else {
+      await sendMessageCore("I cancelled the deletion.");
     }
   };
 
@@ -246,6 +274,26 @@ export default function App() {
               {chatError && (
                 <div className="bg-red-900/20 border border-red-900/50 rounded-xl p-3 mt-2 text-sm text-red-400">
                   {chatError}
+                </div>
+              )}
+
+              {pendingDeletionId && (
+                <div className="bg-zinc-800/80 border border-emerald-500/50 rounded-xl p-4 mt-2 shadow-lg shadow-black/20 flex flex-col items-center animate-in fade-in zoom-in-95 duration-200">
+                  <p className="text-sm text-zinc-200 mb-3 text-center">NOVA is asking for permission to delete a memory. Are you sure?</p>
+                  <div className="flex space-x-3 w-full justify-center">
+                    <button 
+                      onClick={() => handleConfirmDeleteAI(false)}
+                      className="px-4 py-1.5 text-sm font-medium text-zinc-300 bg-zinc-700 hover:bg-zinc-600 rounded-lg transition-colors flex-1 max-w-[120px]"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => handleConfirmDeleteAI(true)}
+                      className="px-4 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg shadow-sm shadow-red-900/50 transition-colors flex-1 max-w-[120px]"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               )}
               

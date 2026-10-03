@@ -30,6 +30,9 @@ impl ToolExecutor {
             "delete_task" => Self::execute_delete_task(&call.arguments),
             "get_current_focus" => Self::execute_get_current_focus(focus_service),
             "get_timer_state" => Self::execute_get_timer_state(focus_service),
+            "get_productivity_summary" => Self::execute_get_productivity_summary(productivity_service, focus_service),
+            "get_remaining_workload" => Self::execute_get_remaining_workload(productivity_service),
+            "get_next_recommended_task" => Self::execute_get_next_recommended_task(productivity_service),
             _ => json!({ "error": format!("UNKNOWN_TOOL: {}", call.name) }),
         };
 
@@ -222,5 +225,40 @@ impl ToolExecutor {
             Err(e) => json!({ "status": "error", "message": e }),
         }
     }
-}
 
+    fn execute_get_productivity_summary(productivity_service: &ProductivityService, focus_service: &FocusService) -> serde_json::Value {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        
+        let summary = match productivity_service.get_productivity_summary(&today) {
+            Ok(s) => s,
+            Err(e) => return json!({ "status": "error", "message": e }),
+        };
+        
+        let timer_state = match focus_service.get_timer_state(None) {
+            Ok(s) => json!(s),
+            Err(_) => json!(null),
+        };
+
+        json!({
+            "status": "success",
+            "summary": summary,
+            "timer_state": timer_state
+        })
+    }
+
+    fn execute_get_remaining_workload(productivity_service: &ProductivityService) -> serde_json::Value {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        match productivity_service.get_remaining_workload(&today) {
+            Ok(workload) => json!({ "status": "success", "date": today, "workload": workload }),
+            Err(e) => json!({ "status": "error", "message": e }),
+        }
+    }
+
+    fn execute_get_next_recommended_task(productivity_service: &ProductivityService) -> serde_json::Value {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        match productivity_service.get_next_recommended_task(&today) {
+            Ok(recommendation) => json!({ "status": "success", "date": today, "recommendation": recommendation }),
+            Err(e) => json!({ "status": "error", "message": e }),
+        }
+    }
+}

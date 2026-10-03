@@ -72,3 +72,28 @@ pub struct Task {
 pub mod repository;
 pub mod service;
 pub mod commands;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProductivitySummary {
+    pub date: String,
+    pub total_tasks: i32,
+    pub completed_tasks: i32,
+    pub remaining_tasks: i32,
+    pub high_priority_remaining: i32,
+    pub estimated_remaining_minutes: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemainingWorkload {
+    pub remaining_tasks: i32,
+    pub total_estimated_minutes: i32,
+    pub high_priority_minutes: i32,
+    pub medium_priority_minutes: i32,
+    pub low_priority_minutes: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRecommendation {
+    pub recommended_task: Option<Task>,
+    pub reasoning: String,
+}

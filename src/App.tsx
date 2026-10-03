@@ -56,6 +56,20 @@ type TimerState = {
   remaining_seconds: number;
 };
 
+export interface RemainingWorkload {
+  pending_tasks: number;
+  in_progress_tasks: number;
+  total_estimated_minutes: number;
+  high_priority_count: number;
+  medium_priority_count: number;
+  low_priority_count: number;
+}
+
+export interface TaskRecommendation {
+  task: Task | null;
+  reasoning: string;
+}
+
 type DistractionState = 
   | "Idle"
   | "FocusActive"
@@ -105,6 +119,9 @@ export default function App() {
   const [taskFormEst, setTaskFormEst] = useState<string>("");
   const [taskFormPriority, setTaskFormPriority] = useState<TaskPriority>("Medium");
   const [taskFormDate, setTaskFormDate] = useState<string>("");
+
+  const [workload, setWorkload] = useState<RemainingWorkload | null>(null);
+  const [recommendation, setRecommendation] = useState<TaskRecommendation | null>(null);
 
   // Focus state
   const [timerState, setTimerState] = useState<TimerState>({ active_session: null, remaining_seconds: 0 });
@@ -316,8 +333,18 @@ export default function App() {
   const loadTasks = async () => {
     try {
       setTaskError(null);
-      const res = await invoke<Task[]>("list_tasks", { date: getTodayDateStr() });
+      const dateStr = getTodayDateStr();
+      const res = await invoke<Task[]>("list_tasks", { date: dateStr });
       setTasks(res);
+      
+      try {
+        const wl = await invoke<RemainingWorkload>("get_remaining_workload", { date: dateStr });
+        const rec = await invoke<TaskRecommendation>("get_next_recommended_task", { date: dateStr });
+        setWorkload(wl);
+        setRecommendation(rec);
+      } catch (innerErr) {
+        console.warn("Failed to load AI insights:", innerErr);
+      }
     } catch (e) {
       setTaskError("Failed to load tasks");
     }
@@ -738,6 +765,43 @@ export default function App() {
                     </>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* AI Insight Panel */}
+            {workload && (workload.pending_tasks > 0 || workload.in_progress_tasks > 0) && (
+              <div className="bg-indigo-900/10 border border-indigo-500/20 rounded-xl p-4 mb-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-5 h-5 rounded bg-indigo-500/20 flex items-center justify-center text-indigo-400">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  </div>
+                  <h3 className="text-sm font-medium text-indigo-300">AI Productivity Insight</h3>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="bg-black/20 rounded-lg p-3">
+                    <p className="text-xs text-zinc-500 mb-1">Remaining Tasks</p>
+                    <p className="text-xl text-zinc-200">{workload.pending_tasks + workload.in_progress_tasks}</p>
+                    <div className="flex gap-1 mt-1">
+                      {workload.high_priority_count > 0 && <span className="w-2 h-2 rounded-full bg-red-500 mt-1" title="High Priority"></span>}
+                      {workload.medium_priority_count > 0 && <span className="w-2 h-2 rounded-full bg-amber-500 mt-1" title="Medium Priority"></span>}
+                      {workload.low_priority_count > 0 && <span className="w-2 h-2 rounded-full bg-emerald-500 mt-1" title="Low Priority"></span>}
+                    </div>
+                  </div>
+                  <div className="bg-black/20 rounded-lg p-3">
+                    <p className="text-xs text-zinc-500 mb-1">Est. Time Remaining</p>
+                    <p className="text-xl text-zinc-200">{workload.total_estimated_minutes} min</p>
+                    <p className="text-xs text-zinc-600 mt-1">Total planned work</p>
+                  </div>
+                </div>
+
+                {recommendation && recommendation.task && (
+                  <div className="bg-black/30 rounded-lg p-3 border border-indigo-500/10">
+                    <p className="text-xs text-indigo-400 mb-1 font-medium">Recommended Next Task:</p>
+                    <p className="text-sm text-zinc-200 font-medium mb-1">{recommendation.task.title}</p>
+                    <p className="text-xs text-zinc-400 italic">"{recommendation.reasoning}"</p>
+                  </div>
+                )}
               </div>
             )}
 

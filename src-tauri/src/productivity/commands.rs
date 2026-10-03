@@ -63,3 +63,19 @@ pub fn reorder_tasks(
 ) -> Result<(), String> {
     service.reorder_tasks(&date, ordered_ids)
 }
+
+#[tauri::command]
+pub fn get_remaining_workload(
+    date: String,
+    service: State<'_, ProductivityService>,
+) -> Result<super::RemainingWorkload, String> {
+    service.get_remaining_workload(&date)
+}
+
+#[tauri::command]
+pub fn get_next_recommended_task(
+    date: String,
+    service: State<'_, ProductivityService>,
+) -> Result<super::TaskRecommendation, String> {
+    service.get_next_recommended_task(&date)
+}

@@ -161,6 +161,8 @@ pub fn run() {
             productivity::commands::set_task_status,
             productivity::commands::delete_task,
             productivity::commands::reorder_tasks,
+            productivity::commands::get_remaining_workload,
+            productivity::commands::get_next_recommended_task,
             focus::commands::start_focus_session,
             focus::commands::start_break,
             focus::commands::pause_focus_session,

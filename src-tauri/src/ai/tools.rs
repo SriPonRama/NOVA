@@ -152,6 +152,30 @@ pub fn get_ai_tools() -> Vec<ToolDefinition> {
                 "type": "OBJECT",
                 "properties": {}
             }),
+        },
+        ToolDefinition {
+            name: "get_productivity_summary".to_string(),
+            description: "Return a structured summary of today's productivity, including total tasks, completed tasks, estimated remaining time, and current timer state. The date is automatically fetched from the system.".to_string(),
+            parameters: json!({
+                "type": "OBJECT",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "get_remaining_workload".to_string(),
+            description: "Return the remaining workload for today, including remaining tasks, total estimated minutes, and breakdown by priority. The date is automatically fetched from the system.".to_string(),
+            parameters: json!({
+                "type": "OBJECT",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "get_next_recommended_task".to_string(),
+            description: "Return the next recommended task to work on based on deterministic prioritization logic in the backend, along with reasoning factors. The date is automatically fetched from the system.".to_string(),
+            parameters: json!({
+                "type": "OBJECT",
+                "properties": {}
+            }),
         }
     ]
 }

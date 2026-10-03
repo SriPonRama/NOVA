@@ -1,9 +1,12 @@
+mod ai;
+
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, State, WindowEvent,
 };
+use dotenvy::dotenv;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub enum AppMode {
@@ -42,11 +45,13 @@ fn get_app_mode(state: State<'_, NovaState>) -> AppMode {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    dotenv().ok();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(NovaState {
             mode: Mutex::new(AppMode::Active),
         })
+        .manage(ai::conversation::ConversationState::new())
         .setup(|app| {
             let show_i = MenuItem::with_id(app, "show", "Show NOVA", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "hide", "Hide NOVA", true, None::<&str>)?;
@@ -110,7 +115,12 @@ pub fn run() {
             }
             _ => {}
         })
-        .invoke_handler(tauri::generate_handler![set_app_mode, get_app_mode])
+        .invoke_handler(tauri::generate_handler![
+            set_app_mode, 
+            get_app_mode,
+            ai::conversation::send_message,
+            ai::conversation::clear_conversation
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

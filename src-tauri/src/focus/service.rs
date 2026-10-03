@@ -49,6 +49,36 @@ impl FocusService {
                 session.updated_at = current_time;
                 
                 self.repo.update_session(&session)?;
+
+                if let Some(app_handle) = app {
+                    use tauri::Manager;
+                    use tauri_plugin_notification::NotificationExt;
+                    
+                    let mut should_notify = true;
+                    if let Some(state) = app_handle.try_state::<tauri::State<'_, std::sync::Mutex<crate::AppMode>>>() {
+                        let current_mode = state.lock().unwrap().clone();
+                        if current_mode == crate::AppMode::Disabled || current_mode == crate::AppMode::Assessment {
+                            should_notify = false;
+                        }
+                    }
+
+                    if should_notify {
+                        let title = match session.session_type {
+                            SessionType::Focus => "Focus Session Completed",
+                            SessionType::Break => "Break Completed",
+                        };
+                        let body = match session.session_type {
+                            SessionType::Focus => "Great job! Your focus session is complete.",
+                            SessionType::Break => "Time to get back to work!",
+                        };
+                        
+                        let _ = app_handle.notification()
+                            .builder()
+                            .title(title)
+                            .body(body)
+                            .show();
+                    }
+                }
             }
         }
         Ok(session)
@@ -73,7 +103,7 @@ impl FocusService {
         }
     }
 
-    pub fn start_focus_session(&self, task_id: &str, duration_seconds: i32) -> Result<FocusSession, String> {
+    pub fn start_focus_session(&self, task_id: Option<&str>, duration_seconds: i32) -> Result<FocusSession, String> {
         if let Some(active) = self.repo.get_active_session()? {
             if active.status == SessionStatus::Running || active.status == SessionStatus::Paused {
                 return Err("Finish or cancel the current focus session first.".to_string());
@@ -84,19 +114,21 @@ impl FocusService {
             return Err("Focus duration must be between 1 and 180 minutes.".to_string());
         }
 
-        let task = self.productivity_service.get_task(task_id)?
-            .ok_or_else(|| "Task not found".to_string())?;
+        if let Some(tid) = task_id {
+            let task = self.productivity_service.get_task(tid)?
+                .ok_or_else(|| "Task not found".to_string())?;
 
-        // Update task status if Pending
-        if task.status == TaskStatus::Pending {
-            self.productivity_service.set_task_status(task_id, TaskStatus::InProgress)?;
+            // Update task status if Pending
+            if task.status == TaskStatus::Pending {
+                self.productivity_service.set_task_status(tid, TaskStatus::InProgress)?;
+            }
         }
 
         let timestamp = Self::current_timestamp();
         
         let session = FocusSession {
             id: Uuid::new_v4().to_string(),
-            task_id: Some(task_id.to_string()),
+            task_id: task_id.map(|s| s.to_string()),
             session_type: SessionType::Focus,
             planned_seconds: duration_seconds,
             started_at: Some(timestamp),
@@ -231,7 +263,7 @@ mod tests {
         let tasks = service.productivity_service.list_tasks("2026-10-03").unwrap();
         let task_id = &tasks[0].id;
         
-        let _session = service.start_focus_session(task_id, 1500).unwrap();
+        let _session = service.start_focus_session(Some(task_id), 1500).unwrap();
         
         let state = service.get_timer_state(None).unwrap();
         assert!(state.active_session.is_some());
@@ -240,7 +272,7 @@ mod tests {
         assert_eq!(active.planned_seconds, 1500);
         
         // Test multiple sessions blocked
-        let res = service.start_focus_session(task_id, 1500);
+        let res = service.start_focus_session(Some(task_id), 1500);
         assert!(res.is_err());
     }
 
@@ -250,7 +282,7 @@ mod tests {
         let tasks = service.productivity_service.list_tasks("2026-10-03").unwrap();
         let task_id = &tasks[0].id;
         
-        service.start_focus_session(task_id, 1500).unwrap();
+        service.start_focus_session(Some(task_id), 1500).unwrap();
         
         service.pause_session().unwrap();
         let state = service.get_timer_state(None).unwrap();
@@ -267,7 +299,7 @@ mod tests {
         let tasks = service.productivity_service.list_tasks("2026-10-03").unwrap();
         let task_id = &tasks[0].id;
         
-        service.start_focus_session(task_id, 1500).unwrap();
+        service.start_focus_session(Some(task_id), 1500).unwrap();
         service.finish_session().unwrap();
         
         let state = service.get_timer_state(None).unwrap();

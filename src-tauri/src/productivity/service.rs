@@ -373,7 +373,7 @@ mod tests {
 
         // Create tasks
         let low_prio = service.create_task("Low", None, "2026-10-03", Some(10), TaskPriority::Low).unwrap();
-        let med_prio = service.create_task("Med", None, "2026-10-03", None, TaskPriority::Medium).unwrap(); // missing duration
+        let _med_prio = service.create_task("Med", None, "2026-10-03", None, TaskPriority::Medium).unwrap(); // missing duration
         let high_prio = service.create_task("High", None, "2026-10-03", Some(60), TaskPriority::High).unwrap();
 
         // High priority should win
@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(rec.recommended_task.unwrap().id, high_prio.id);
 
         // Tie breaking position: create another high priority
-        let high_prio2 = service.create_task("High 2", None, "2026-10-03", Some(30), TaskPriority::High).unwrap();
+        let _high_prio2 = service.create_task("High 2", None, "2026-10-03", Some(30), TaskPriority::High).unwrap();
         
         // The earlier positioned one (high_prio) should win
         let rec = service.get_next_recommended_task("2026-10-03").unwrap();

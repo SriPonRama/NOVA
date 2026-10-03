@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State, WindowEvent,
+    Emitter, Manager, State, WindowEvent,
 };
 use dotenvy::dotenv;
 
@@ -20,6 +20,7 @@ pub enum AppMode {
     Break,
     Assessment,
     Paused,
+    Disabled,
 }
 
 pub struct NovaState {
@@ -53,6 +54,8 @@ pub fn run() {
     dotenv().ok();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
+        .plugin(tauri_plugin_notification::init())
         .manage(NovaState {
             mode: Mutex::new(AppMode::Active),
         })
@@ -82,13 +85,18 @@ pub fn run() {
 
             let show_i = MenuItem::with_id(app, "show", "Show NOVA", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "hide", "Hide NOVA", true, None::<&str>)?;
+            let today_i = MenuItem::with_id(app, "today", "Open Today", true, None::<&str>)?;
+            let focus_i = MenuItem::with_id(app, "focus", "Start Focus", true, None::<&str>)?;
+            let break_i = MenuItem::with_id(app, "break", "Start Break", true, None::<&str>)?;
+            let assessment_i = MenuItem::with_id(app, "assessment", "Assessment Mode", true, None::<&str>)?;
+            let disable_i = MenuItem::with_id(app, "disable", "Pause/Disable NOVA", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit NOVA", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &hide_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&show_i, &hide_i, &today_i, &focus_i, &break_i, &assessment_i, &disable_i, &quit_i])?;
 
             TrayIconBuilder::new()
                 .menu(&menu)
                 .icon(app.default_window_icon().unwrap().clone())
-                .on_menu_event(|app, event| match event.id.as_ref() {
+                .on_menu_event(move |app, event| match event.id.as_ref() {
                     "quit" => {
                         app.exit(0);
                     }
@@ -101,6 +109,38 @@ pub fn run() {
                     "hide" => {
                         if let Some(window) = app.get_webview_window("main") {
                             window.hide().unwrap();
+                        }
+                    }
+                    "today" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            window.show().unwrap();
+                            window.set_focus().unwrap();
+                            let _ = window.emit("navigate", "Today");
+                        }
+                    }
+                    "focus" => {
+                        let focus_service = app.state::<focus::service::FocusService>();
+                        let _ = focus_service.start_focus_session(None, 25 * 60);
+                    }
+                    "break" => {
+                        let focus_service = app.state::<focus::service::FocusService>();
+                        let _ = focus_service.start_break(5 * 60);
+                    }
+                    "assessment" => {
+                        let state = app.state::<NovaState>();
+                        let mut current_mode = state.mode.lock().unwrap();
+                        *current_mode = AppMode::Assessment;
+                        if let Some(window) = app.get_webview_window("main") {
+                            window.hide().unwrap();
+                        }
+                    }
+                    "disable" => {
+                        let state = app.state::<NovaState>();
+                        let mut current_mode = state.mode.lock().unwrap();
+                        if *current_mode == AppMode::Disabled {
+                            *current_mode = AppMode::Active;
+                        } else if *current_mode != AppMode::Assessment {
+                            *current_mode = AppMode::Disabled;
                         }
                     }
                     _ => {}

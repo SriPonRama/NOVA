@@ -60,7 +60,7 @@ impl DesktopAwarenessService {
             }
         };
 
-        if app_mode == AppMode::Assessment {
+        if app_mode == AppMode::Assessment || app_mode == AppMode::Disabled {
             self.engine.lock().unwrap().reset();
             return;
         }

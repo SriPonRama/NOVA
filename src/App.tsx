@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
+import { enable, disable, isEnabled as checkAutostartEnabled } from "@tauri-apps/plugin-autostart";
 
-type AppMode = "Active" | "Focus" | "Break" | "Assessment" | "Paused";
+type AppMode = "Active" | "Focus" | "Break" | "Assessment" | "Paused" | "Disabled";
 type ViewMode = "Chat" | "Memory" | "Today" | "Settings";
 
 type ChatMessage = {
@@ -132,10 +135,42 @@ export default function App() {
   const [distractionState, setDistractionState] = useState<DistractionState>("Idle");
   const [desktopSettings, setDesktopSettings] = useState<DesktopSettings>({ enabled: true, grace_period_seconds: 60, cooldown_minutes: 5 });
 
+  const [startWithWindows, setStartWithWindows] = useState(false);
+  const [isCompanion, setIsCompanion] = useState(false);
+
   useEffect(() => {
     invoke<AppMode>("get_app_mode").then(setMode).catch(console.error);
     invoke<DesktopSettings>("get_desktop_awareness_settings").then(setDesktopSettings).catch(console.error);
+    
+    checkAutostartEnabled().then(setStartWithWindows).catch(console.error);
+    
+    try {
+      const win = getCurrentWindow();
+      if (win && win.label === "companion") {
+        setIsCompanion(true);
+      }
+    } catch(e) {}
+
+    const unlisten = listen("navigate", (event) => {
+      if (event.payload === "Today") {
+        setView("Today");
+      }
+    });
+
+    return () => {
+      unlisten.then(f => f());
+    };
   }, []);
+
+  const handleToggleAutostart = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const enabled = e.target.checked;
+    setStartWithWindows(enabled);
+    if (enabled) {
+      await enable();
+    } else {
+      await disable();
+    }
+  };
 
   const getTodayDateStr = () => {
     const d = new Date();
@@ -502,6 +537,46 @@ export default function App() {
     ? tasks.find(t => t.id === timerState.active_session!.task_id) 
     : null;
 
+  if (isCompanion) {
+    return (
+      <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100 font-sans antialiased overflow-hidden p-4">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="font-semibold text-zinc-100 tracking-wide text-sm flex items-center gap-2">
+            <div className={`w-2.5 h-2.5 rounded-full ${timerState.active_session?.status === 'Running' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'}`}></div>
+            NOVA
+          </h1>
+          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${mode === "Disabled" ? "bg-zinc-800 text-zinc-500" : "bg-emerald-900/30 text-emerald-500"}`}>{mode}</span>
+        </div>
+        
+        {timerState.active_session ? (
+          <div className="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700/50 flex-1 flex flex-col justify-center items-center">
+            <p className="text-xs text-zinc-400 mb-2 uppercase tracking-wider">{timerState.active_session.session_type}</p>
+            <p className="text-4xl font-mono text-emerald-400 font-medium tracking-tight mb-4">{formatTime(timerState.remaining_seconds)}</p>
+            {activeTask && (
+              <p className="text-sm text-zinc-300 text-center mb-6">{activeTask.title}</p>
+            )}
+            <div className="flex gap-2">
+              {timerState.active_session.status === 'Running' ? (
+                <button onClick={pauseSession} className="px-3 py-1.5 bg-amber-600/20 text-amber-500 border border-amber-500/50 rounded hover:bg-amber-600/30 text-xs">Pause</button>
+              ) : (
+                <button onClick={resumeSession} className="px-3 py-1.5 bg-emerald-600/20 text-emerald-500 border border-emerald-500/50 rounded hover:bg-emerald-600/30 text-xs">Resume</button>
+              )}
+              <button onClick={finishSession} className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded text-xs">Finish</button>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-700/30 flex-1 flex flex-col justify-center items-center space-y-3">
+            <p className="text-sm text-zinc-400">Ready to focus.</p>
+            <div className="flex gap-2">
+              <button onClick={() => invoke("start_focus_session", { taskId: null, durationSeconds: 25 * 60 }).catch(console.error)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs">Start Focus</button>
+              <button onClick={() => invoke("start_break", { durationSeconds: 5 * 60 }).catch(console.error)} className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded text-xs">Break</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100 font-sans antialiased overflow-hidden selection:bg-zinc-700">
       
@@ -626,16 +701,41 @@ export default function App() {
                   <h2 className="text-xl font-medium text-zinc-100">Good morning.</h2>
                   <p className="text-sm text-zinc-400">Your systems are running optimally.</p>
                 </section>
-                <section className="pt-2">
+                <section className="pt-2 flex gap-2">
+                  <button 
+                    onClick={() => changeMode(mode === "Disabled" ? "Active" : "Disabled")}
+                    className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium border transition-colors ${
+                      mode === "Disabled" 
+                        ? "bg-emerald-900/30 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/50" 
+                        : "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700"
+                    }`}
+                  >
+                    {mode === "Disabled" ? "Enable NOVA" : "Disable NOVA"}
+                  </button>
                   <button 
                     onClick={() => changeMode("Assessment")}
-                    className="w-full py-2 px-4 rounded-lg bg-red-900/30 text-red-400 text-sm font-medium border border-red-900/50 hover:bg-red-900/50 transition-colors"
+                    className="flex-1 py-2 px-4 rounded-lg bg-red-900/30 text-red-400 text-sm font-medium border border-red-900/50 hover:bg-red-900/50 transition-colors"
                   >
                     Enter Assessment Mode
                   </button>
                 </section>
               </div>
             )}
+
+            <section className="bg-zinc-800/50 border border-zinc-700/50 rounded-xl p-5 mb-6 mt-6">
+              <h3 className="text-sm font-medium text-zinc-300 mb-4 uppercase tracking-wider">Desktop Companion</h3>
+              
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <p className="text-zinc-100 font-medium text-sm">Start NOVA with Windows</p>
+                  <p className="text-xs text-zinc-400 mt-1">NOVA will launch silently in the background when you log in.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer" checked={startWithWindows} onChange={handleToggleAutostart} />
+                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                </label>
+              </div>
+            </section>
 
             <div className="flex-1 space-y-4 flex flex-col justify-end pb-2">
               {messages.map((msg, idx) => (

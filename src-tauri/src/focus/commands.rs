@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 #[tauri::command]
 pub fn start_focus_session(
-    task_id: String, 
+    task_id: Option<String>, 
     duration_seconds: i32, 
     state: State<'_, FocusService>,
     mode: State<'_, Mutex<AppMode>>
@@ -15,7 +15,7 @@ pub fn start_focus_session(
     if current_mode == AppMode::Assessment {
         return Err("Cannot start focus sessions in Assessment Mode".to_string());
     }
-    state.start_focus_session(&task_id, duration_seconds)
+    state.start_focus_session(task_id.as_deref(), duration_seconds)
 }
 
 #[tauri::command]

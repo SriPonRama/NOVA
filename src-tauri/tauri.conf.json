@@ -19,6 +19,19 @@
         "minHeight": 500,
         "resizable": true,
         "center": true
+      },
+      {
+        "title": "NOVA Companion",
+        "label": "companion",
+        "width": 300,
+        "height": 450,
+        "minWidth": 250,
+        "minHeight": 300,
+        "resizable": true,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true
       }
     ],
     "security": {

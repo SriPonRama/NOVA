@@ -54,8 +54,12 @@ pub async fn send_message(
     focus_service: State<'_, crate::focus::service::FocusService>,
 ) -> Result<serde_json::Value, String> {
     
-    if let crate::AppMode::Assessment = *nova_state.mode.lock().unwrap() {
+    let current_mode = nova_state.mode.lock().unwrap().clone();
+    if current_mode == crate::AppMode::Assessment {
         return Err("AI and memory operations are blocked during Assessment Mode.".to_string());
+    }
+    if current_mode == crate::AppMode::Disabled {
+        return Err("NOVA is currently disabled. Please enable NOVA to use AI features.".to_string());
     }
 
     let mut history = state.history.lock().unwrap().clone();

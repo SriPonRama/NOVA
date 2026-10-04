@@ -35,7 +35,7 @@ fn change_app_mode(mode: AppMode, app: &tauri::AppHandle) {
 
     if mode == AppMode::Assessment || mode == AppMode::Disabled {
         let cv = app.state::<std::sync::Arc<cv::service::CVService>>();
-        cv.set_enabled(false);
+        cv.set_enabled(false, Some(app.clone()));
         cv.stop();
     }
 
@@ -226,6 +226,8 @@ pub fn run() {
             cv::commands::toggle_cv_monitoring,
             cv::commands::get_cv_settings,
             cv::commands::get_latest_cv_signal,
+            cv::commands::dismiss_drowsiness_intervention,
+            cv::commands::take_drowsiness_break,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

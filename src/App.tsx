@@ -90,6 +90,7 @@ type DesktopSettings = {
 
 type CVSettings = { enabled: boolean };
 type DrowsinessSignal = { face_detected: boolean, eye_measurement: number, confidence: number, timestamp: number, status: string };
+type DrowsinessState = "Awake" | "PossiblyDrowsy" | "Drowsy" | "Intervention" | "Cooldown";
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>("Active");
@@ -143,6 +144,8 @@ export default function App() {
 
   const [cvSettings, setCvSettings] = useState<CVSettings>({ enabled: false });
   const [cvSignal, setCvSignal] = useState<DrowsinessSignal | null>(null);
+  const [drowsinessState, setDrowsinessState] = useState<DrowsinessState>("Awake");
+  const [showDrowsinessIntervention, setShowDrowsinessIntervention] = useState(false);
 
   useEffect(() => {
     invoke<AppMode>("get_app_mode").then(setMode).catch(console.error);
@@ -158,14 +161,24 @@ export default function App() {
       }
     } catch(e) {}
 
-    const unlisten = listen("navigate", (event) => {
+    const unlistenNavigate = listen("navigate", (event) => {
       if (event.payload === "Today") {
         setView("Today");
       }
     });
 
+    const unlistenDrowsinessState = listen<DrowsinessState>("drowsiness_state_changed", (event) => {
+      setDrowsinessState(event.payload);
+    });
+
+    const unlistenDrowsinessIntervention = listen("drowsiness_intervention", () => {
+      setShowDrowsinessIntervention(true);
+    });
+
     return () => {
-      unlisten.then(f => f());
+      unlistenNavigate.then(f => f());
+      unlistenDrowsinessState.then(f => f());
+      unlistenDrowsinessIntervention.then(f => f());
     };
   }, []);
 
@@ -559,6 +572,26 @@ export default function App() {
     setDistractionState("Cooldown");
   };
 
+  const handleTakeBreak = async () => {
+    setShowDrowsinessIntervention(false);
+    try {
+      await invoke("take_drowsiness_break");
+      setDrowsinessState("Cooldown");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDismissIntervention = async () => {
+    setShowDrowsinessIntervention(false);
+    try {
+      await invoke("dismiss_drowsiness_intervention");
+      setDrowsinessState("Cooldown");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const activeTask = timerState.active_session?.task_id 
     ? tasks.find(t => t.id === timerState.active_session!.task_id) 
     : null;
@@ -630,6 +663,36 @@ export default function App() {
                       className="py-3 px-4 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded-xl text-sm font-medium transition-colors"
                     >
                       Keep Working Here
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Drowsiness Intervention Modal */}
+      {showDrowsinessIntervention && (
+        <div className="absolute inset-0 z-50 bg-zinc-900/95 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-zinc-800 border border-zinc-700 rounded-2xl p-8 max-w-sm w-full shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col items-center text-center transform scale-100 animate-in fade-in zoom-in-95 duration-300">
+                <div className="w-12 h-12 bg-indigo-500/20 rounded-full flex items-center justify-center mb-4">
+                  <span className="text-indigo-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12h4l3-9 5 18 3-9h5"/></svg>
+                  </span>
+                </div>
+                <h2 className="text-xl font-medium text-zinc-100 mb-3">Hey there</h2>
+                <p className="text-sm text-zinc-400 mb-8 leading-relaxed">You seem a little tired. Would you like to take a break?</p>
+                
+                <div className="flex flex-col gap-3 w-full">
+                    <button 
+                      onClick={handleTakeBreak} 
+                      className="py-3 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-medium transition-colors shadow-lg shadow-indigo-900/20"
+                    >
+                      Take a Break
+                    </button>
+                    <button 
+                      onClick={handleDismissIntervention} 
+                      className="py-3 px-4 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded-xl text-sm font-medium transition-colors"
+                    >
+                      I'm Fine
                     </button>
                 </div>
             </div>
@@ -893,6 +956,22 @@ export default function App() {
                          </span>
                          <span className="text-amber-500/80 font-medium">Focus activity: paused</span>
                        </div>
+                    )}
+                    
+                    {/* Drowsiness Indicator */}
+                    {timerState.active_session.session_type === 'Focus' && timerState.active_session.status === 'Running' && cvSettings.enabled && (
+                      <div className="flex items-center gap-1.5 mt-2 text-xs">
+                        <span className="relative flex h-2 w-2">
+                          <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${drowsinessState === 'PossiblyDrowsy' ? 'bg-amber-400 animate-ping' : drowsinessState === 'Drowsy' || drowsinessState === 'Intervention' ? 'bg-red-400 animate-ping' : 'bg-emerald-400'}`}></span>
+                          <span className={`relative inline-flex rounded-full h-2 w-2 ${drowsinessState === 'PossiblyDrowsy' ? 'bg-amber-500' : drowsinessState === 'Drowsy' || drowsinessState === 'Intervention' ? 'bg-red-500' : 'bg-emerald-500'}`}></span>
+                        </span>
+                        <span className={`${drowsinessState === 'PossiblyDrowsy' ? 'text-amber-400' : drowsinessState === 'Drowsy' || drowsinessState === 'Intervention' ? 'text-red-400' : 'text-emerald-400/80'} font-medium`}>
+                          {drowsinessState === 'Cooldown' ? "Drowsiness monitoring: cooldown" : 
+                           drowsinessState === 'PossiblyDrowsy' ? "Possibly tired" : 
+                           drowsinessState === 'Drowsy' || drowsinessState === 'Intervention' ? "Drowsiness detected" : 
+                           "Monitoring alertness"}
+                        </span>
+                      </div>
                     )}
                   </div>
                   <div className="text-4xl font-mono tracking-tight font-light text-emerald-400">

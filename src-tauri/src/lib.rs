@@ -4,6 +4,7 @@ mod db;
 mod productivity;
 mod focus;
 mod desktop;
+pub mod cv;
 
 use std::sync::Mutex;
 use tauri::{
@@ -27,21 +28,27 @@ pub struct NovaState {
     pub mode: Mutex<AppMode>,
 }
 
-#[tauri::command]
-fn set_app_mode(mode: AppMode, state: State<'_, NovaState>, app: tauri::AppHandle) {
+fn change_app_mode(mode: AppMode, app: &tauri::AppHandle) {
+    let state = app.state::<NovaState>();
     let mut current_mode = state.mode.lock().unwrap();
     *current_mode = mode.clone();
 
-    // Side-effects based on mode
-    match mode {
-        AppMode::Assessment => {
-            // Hide the UI completely during Assessment Mode
-            if let Some(window) = app.get_webview_window("main") {
-                window.hide().unwrap();
-            }
-        }
-        _ => {}
+    if mode == AppMode::Assessment || mode == AppMode::Disabled {
+        let cv = app.state::<std::sync::Arc<cv::service::CVService>>();
+        cv.set_enabled(false);
+        cv.stop();
     }
+
+    if mode == AppMode::Assessment {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.hide();
+        }
+    }
+}
+
+#[tauri::command]
+fn set_app_mode(mode: AppMode, app: tauri::AppHandle) {
+    change_app_mode(mode, &app);
 }
 
 #[tauri::command]
@@ -59,6 +66,7 @@ pub fn run() {
         .manage(NovaState {
             mode: Mutex::new(AppMode::Active),
         })
+        .manage(std::sync::Arc::new(cv::service::CVService::new()))
         .manage(ai::conversation::ConversationState::new())
         .setup(|app| {
             let app_dir = app.path().app_data_dir().expect("Failed to get app data dir");
@@ -127,20 +135,18 @@ pub fn run() {
                         let _ = focus_service.start_break(5 * 60);
                     }
                     "assessment" => {
-                        let state = app.state::<NovaState>();
-                        let mut current_mode = state.mode.lock().unwrap();
-                        *current_mode = AppMode::Assessment;
-                        if let Some(window) = app.get_webview_window("main") {
-                            window.hide().unwrap();
-                        }
+                        change_app_mode(AppMode::Assessment, &app);
                     }
                     "disable" => {
-                        let state = app.state::<NovaState>();
-                        let mut current_mode = state.mode.lock().unwrap();
-                        if *current_mode == AppMode::Disabled {
-                            *current_mode = AppMode::Active;
-                        } else if *current_mode != AppMode::Assessment {
-                            *current_mode = AppMode::Disabled;
+                        let current_mode = {
+                            let state = app.state::<NovaState>();
+                            let mode = state.mode.lock().unwrap().clone();
+                            mode
+                        };
+                        if current_mode == AppMode::Disabled {
+                            change_app_mode(AppMode::Active, &app);
+                        } else if current_mode != AppMode::Assessment {
+                            change_app_mode(AppMode::Disabled, &app);
                         }
                     }
                     _ => {}
@@ -217,6 +223,9 @@ pub fn run() {
             desktop::commands::get_distraction_state,
             desktop::commands::return_to_focus,
             desktop::commands::keep_working_here,
+            cv::commands::toggle_cv_monitoring,
+            cv::commands::get_cv_settings,
+            cv::commands::get_latest_cv_signal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

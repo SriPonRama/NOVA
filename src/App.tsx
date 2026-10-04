@@ -88,6 +88,9 @@ type DesktopSettings = {
   cooldown_minutes: number;
 };
 
+type CVSettings = { enabled: boolean };
+type DrowsinessSignal = { face_detected: boolean, eye_measurement: number, confidence: number, timestamp: number, status: string };
+
 export default function App() {
   const [mode, setMode] = useState<AppMode>("Active");
   const [view, setView] = useState<ViewMode>("Today");
@@ -138,9 +141,13 @@ export default function App() {
   const [startWithWindows, setStartWithWindows] = useState(false);
   const [isCompanion, setIsCompanion] = useState(false);
 
+  const [cvSettings, setCvSettings] = useState<CVSettings>({ enabled: false });
+  const [cvSignal, setCvSignal] = useState<DrowsinessSignal | null>(null);
+
   useEffect(() => {
     invoke<AppMode>("get_app_mode").then(setMode).catch(console.error);
     invoke<DesktopSettings>("get_desktop_awareness_settings").then(setDesktopSettings).catch(console.error);
+    invoke<CVSettings>("get_cv_settings").then(setCvSettings).catch(console.error);
     
     checkAutostartEnabled().then(setStartWithWindows).catch(console.error);
     
@@ -162,6 +169,15 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const int = setInterval(() => {
+      invoke<DrowsinessSignal | null>("get_latest_cv_signal").then(sig => {
+        if (sig) setCvSignal(sig);
+      }).catch(() => {});
+    }, 1000);
+    return () => clearInterval(int);
+  }, []);
+
   const handleToggleAutostart = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const enabled = e.target.checked;
     setStartWithWindows(enabled);
@@ -169,6 +185,16 @@ export default function App() {
       await enable();
     } else {
       await disable();
+    }
+  };
+
+  const handleToggleCV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const enabled = e.target.checked;
+    setCvSettings({ enabled });
+    try {
+      await invoke("toggle_cv_monitoring", { enabled });
+    } catch (err) {
+      console.error("Failed to toggle CV monitoring", err);
     }
   };
 
@@ -689,6 +715,43 @@ export default function App() {
                   <option value={10}>10 minutes</option>
                 </select>
               </div>
+            </section>
+            <section className="bg-zinc-800/50 border border-zinc-700/50 rounded-xl p-5 mb-6 mt-6">
+              <h3 className="text-sm font-medium text-zinc-300 mb-4 uppercase tracking-wider">Computer Vision</h3>
+              
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <p className="text-zinc-100 font-medium text-sm">Enable Drowsiness Monitoring</p>
+                  <p className="text-xs text-zinc-400 mt-1">NOVA will use your local webcam to detect signs of drowsiness during focus sessions.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer" checked={cvSettings.enabled} onChange={handleToggleCV} />
+                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                </label>
+              </div>
+
+              <div className="bg-zinc-900/50 border border-zinc-700/50 rounded-lg p-3 text-xs mb-3">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-zinc-400">CV Status:</span>
+                  <span className={`font-mono ${cvSettings.enabled ? 'text-emerald-400' : 'text-zinc-500'}`}>{cvSignal ? cvSignal.status : (cvSettings.enabled ? 'Starting/No signal' : 'Stopped')}</span>
+                </div>
+                {cvSignal && cvSettings.enabled && (
+                  <>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-zinc-400">Face Detected:</span>
+                      <span className="font-mono text-zinc-300">{cvSignal.face_detected ? 'Yes' : 'No'}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-zinc-400">Eye Measurement (EAR):</span>
+                      <span className="font-mono text-zinc-300">{cvSignal.eye_measurement.toFixed(3)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <p className="text-xs text-zinc-500 italic mt-3">
+                Privacy statement: Camera processing happens locally. NOVA does not save or upload webcam frames. No identity recognition is performed.
+              </p>
             </section>
           </div>
         )}
